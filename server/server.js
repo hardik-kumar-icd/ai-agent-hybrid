@@ -7,6 +7,7 @@ require('dotenv').config();
 // Import routes
 const chatRoute = require('./routes/chatRoute');
 const fileRoute = require('./routes/fileRoute');
+const visorRoute = require('./routes/visorRoute');
 const { ragAgent } = require('./agents/ragAgent');
 
 const app = express();
@@ -45,6 +46,92 @@ app.use('/chat', chatRoute);
 
 // File ingestion route (RAG)
 app.use('/ingest', fileRoute);
+
+// Visor.no AI Agent route
+app.use('/visor-chat', visorRoute);
+
+// Test endpoint for WooCommerce API connectivity
+app.get('/test-woocommerce', async (req, res) => {
+  try {
+    const platformConfig = require('./config/platform');
+    const axios = require('axios');
+    
+    const { platform, endpoints, auth } = platformConfig;
+    
+    if (platform !== 'wordpress') {
+      return res.json({
+        status: 'info',
+        message: `Platform is set to '${platform}', not 'wordpress'`,
+        config: {
+          platform: platform,
+          endpoint: endpoints.wordpress,
+          hasCredentials: !!(auth.wordpress.consumerKey && auth.wordpress.consumerSecret)
+        }
+      });
+    }
+    
+    if (!auth.wordpress.consumerKey || !auth.wordpress.consumerSecret) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'WooCommerce credentials not configured',
+        help: 'Set WOOCOMMERCE_CONSUMER_KEY and WOOCOMMERCE_CONSUMER_SECRET in .env file'
+      });
+    }
+    
+    // Test API connection
+    const testOrderId = req.query.order_id || '1';
+    const apiUrl = `${endpoints.wordpress}/orders/${testOrderId}`;
+    const credentials = Buffer.from(
+      `${auth.wordpress.consumerKey}:${auth.wordpress.consumerSecret}`
+    ).toString('base64');
+    
+    try {
+      const response = await axios.get(apiUrl, {
+        headers: {
+          'Authorization': `Basic ${credentials}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+      
+      res.json({
+        status: 'success',
+        message: 'WooCommerce API connection successful',
+        order: {
+          id: response.data.id,
+          status: response.data.status,
+          email: response.data.billing?.email,
+          total: response.data.total
+        },
+        config: {
+          endpoint: endpoints.wordpress,
+          platform: platform
+        }
+      });
+    } catch (error) {
+      res.status(error.response?.status || 500).json({
+        status: 'error',
+        message: 'WooCommerce API connection failed',
+        error: {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          message: error.message,
+          details: error.response?.data || error.message
+        },
+        config: {
+          endpoint: apiUrl,
+          hasCredentials: true
+        }
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: 'Test endpoint error',
+      error: error.message
+    });
+  }
+});
 
 // RAG route for testing - GET handler (with query parameter)
 app.get('/rag', async (req, res) => {
