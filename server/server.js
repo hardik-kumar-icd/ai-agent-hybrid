@@ -4,6 +4,9 @@ const multer = require('multer');
 const path = require('path');
 require('dotenv').config();
 
+// Import routes
+const chatRoute = require('./routes/chatRoute');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -35,50 +38,8 @@ app.get('/', (req, res) => {
   res.json({ message: 'Server is running!' });
 });
 
-// Chat route - GET handler for info
-app.get('/chat', (req, res) => {
-  res.json({
-    message: 'Chat endpoint - Use POST method',
-    method: 'POST',
-    endpoint: '/chat',
-    body: {
-      message: 'string (required)',
-      conversationId: 'string (optional)'
-    },
-    example: {
-      curl: 'curl -X POST http://localhost:5000/chat -H "Content-Type: application/json" -d \'{"message":"Hello"}\''
-    }
-  });
-});
-
-// Chat route - POST handler
-app.post('/chat', (req, res) => {
-  try {
-    const { message, conversationId } = req.body;
-
-    if (!message) {
-      return res.status(400).json({ 
-        error: 'Message is required' 
-      });
-    }
-
-    // Basic chat response (you can extend this with AI logic)
-    const response = {
-      id: Date.now().toString(),
-      message: `Echo: ${message}`,
-      conversationId: conversationId || null,
-      timestamp: new Date().toISOString()
-    };
-
-    res.json(response);
-  } catch (error) {
-    console.error('Chat error:', error);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      message: error.message 
-    });
-  }
-});
+// Chat route
+app.use('/chat', chatRoute);
 
 // Upload route - GET handler for info
 app.get('/upload', (req, res) => {
