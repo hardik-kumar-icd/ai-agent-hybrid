@@ -7,11 +7,16 @@ const { RecursiveCharacterTextSplitter } = require('@langchain/textsplitters');
  */
 async function splitText(text) {
   try {
-    // Initialize the text splitter with 1000 character chunks and 200 character overlap
+    // Detect if input text is likely product data (contains "Product Name:" and "SKU:")
+    // Use larger chunks for product data to keep product entries together
+    const isProductData = text.includes('Product Name:') && text.includes('SKU:');
+    const chunkSize = isProductData ? 2000 : 1000;
+    const chunkOverlap = isProductData ? 300 : 200;
+    
     const textSplitter = new RecursiveCharacterTextSplitter({
-      chunkSize: 1000,
-      chunkOverlap: 200,
-      separators: ['\n\n', '\n', '. ', ' ', ''], // Split by paragraphs, lines, sentences, words
+      chunkSize: chunkSize,
+      chunkOverlap: chunkOverlap,
+      separators: ['\n\n', '\n', '. ', ' ', ''],
     });
 
     // Split the text into documents

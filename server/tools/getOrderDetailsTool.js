@@ -1,15 +1,18 @@
 const fs = require('fs');
 const path = require('path');
+const { sanitizeOrderData } = require('../utils/piiFilter');
+const { getOrderStatusTool } = require('./getOrderStatusTool');
 
 /**
  * Tool: get_order_details
  * Fetches cached order data from orders.json
+ * Falls back to get_order_status if order not found in cache
  */
 async function getOrderDetailsTool({ order_id, email }) {
   try {
     // Validate inputs
     if (!order_id || !email) {
-      throw new Error('Both order_id and email are required');
+      throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
     }
 
     // Read orders from JSON file
@@ -22,28 +25,30 @@ async function getOrderDetailsTool({ order_id, email }) {
       o => o.id === order_id.toString() && o.email.toLowerCase() === email.toLowerCase()
     );
 
-    if (!order) {
-      throw new Error(`Order ${order_id} not found for email ${email}`);
+    if (order) {
+      // Return sanitized order data (no PII, price, or address)
+      return sanitizeOrderData(order);
+    } else {
+      // Fallback to live API if not found in cache
+      try {
+        const liveData = await getOrderStatusTool({ order_id, email });
+        return sanitizeOrderData(liveData);
+      } catch (fallbackError) {
+        throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
+      }
     }
-
-    // Return normalized order data
-    return {
-      order_id: order.id,
-      status: order.status,
-      total: order.total || null,
-      currency: order.currency || 'NOK',
-      tracking: order.tracking || null,
-      delivery_date: order.delivery_date || null
-    };
   } catch (error) {
-    throw new Error(`Failed to get order details: ${error.message}`);
+    if (error.message.includes('Beklager')) {
+      throw error;
+    }
+    throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
   }
 }
 
 // Export as LangChain tool
 const getOrderDetailsToolSchema = {
   name: 'get_order_details',
-  description: 'Fetch cached order data (status, tracking, delivery date) from the local orders database. Use this for quick lookups of order information.',
+  description: 'Fetch cached order data (status, tracking, delivery date) from the local orders database. Use this FIRST for quick lookups. Falls back to live API if not found. Returns only: id, status, tracking, delivery_date. Does NOT return price, currency, or PII.',
   parameters: {
     type: 'object',
     properties: {

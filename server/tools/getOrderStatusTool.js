@@ -1,5 +1,6 @@
 const axios = require('axios');
 const platformConfig = require('../config/platform');
+const { sanitizeOrderData } = require('../utils/piiFilter');
 
 /**
  * Tool: get_order_status
@@ -9,7 +10,7 @@ async function getOrderStatusTool({ order_id, email }) {
   try {
     // Validate inputs
     if (!order_id || !email) {
-      throw new Error('Both order_id and email are required');
+      throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
     }
 
     const { platform, endpoints, auth } = platformConfig;
@@ -47,21 +48,22 @@ async function getOrderStatusTool({ order_id, email }) {
           meta => meta.key === '_delivery_date' || meta.key === 'delivery_date'
         )?.value || null;
 
+        // Build order data without total/currency (will be sanitized)
         orderData = {
           id: order.id.toString(),
           status: order.status,
-          total: order.total || order.total_formatted || null,
-          currency: order.currency || 'NOK',
           tracking: tracking,
           delivery_date: deliveryDate
         };
       } catch (error) {
         if (error.response?.status === 404) {
-          throw new Error(`Order ${order_id} not found`);
+          throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
         } else if (error.response?.status === 401 || error.response?.status === 403) {
-          throw new Error('Authentication failed. Please check API credentials.');
+          throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
+        } else if (error.message.includes('Email does not match')) {
+          throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
         } else {
-          throw new Error(`WordPress API error: ${error.message}`);
+          throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
         }
       }
     } else if (platform === 'magento') {
@@ -104,35 +106,33 @@ async function getOrderStatusTool({ order_id, email }) {
         };
       } catch (error) {
         if (error.response?.status === 404) {
-          throw new Error(`Order ${order_id} not found`);
+          throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
         } else if (error.response?.status === 401 || error.response?.status === 403) {
-          throw new Error('Authentication failed. Please check API credentials.');
+          throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
+        } else if (error.message.includes('Email does not match')) {
+          throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
         } else {
-          throw new Error(`Magento API error: ${error.message}`);
+          throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
         }
       }
     } else {
       throw new Error(`Unsupported platform: ${platform}`);
     }
 
-    // Return normalized order data
-    return {
-      order_id: orderData.id,
-      status: orderData.status,
-      total: orderData.total,
-      currency: orderData.currency,
-      tracking: orderData.tracking,
-      delivery_date: orderData.delivery_date
-    };
+    // Return sanitized order data (no PII, price, or address)
+    return sanitizeOrderData(orderData);
   } catch (error) {
-    throw new Error(`Failed to get order status: ${error.message}`);
+    if (error.message.includes('Beklager')) {
+      throw error;
+    }
+    throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
   }
 }
 
 // Export as LangChain tool
 const getOrderStatusToolSchema = {
   name: 'get_order_status',
-  description: 'Fetch real-time order information from the CMS API (WordPress/WooCommerce or Magento 2). Use this when you need the most up-to-date order status from the live system.',
+  description: 'Fetch real-time order information from the CMS API (WordPress/WooCommerce or Magento 2). Use this when you need the most up-to-date order status from the live system. Returns only: id, status, tracking, delivery_date. Does NOT return price, currency, or PII.',
   parameters: {
     type: 'object',
     properties: {

@@ -28,13 +28,13 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024 // 10MB limit
   },
   fileFilter: (req, file, cb) => {
-    // Accept PDF and text files
-    const allowedTypes = ['.pdf', '.txt', '.text', '.docx', '.doc', '.xlsx', '.xls', '.csv'];
+    // Accept PDF, text, JSON, and office files
+    const allowedTypes = ['.pdf', '.txt', '.text', '.docx', '.doc', '.xlsx', '.xls', '.csv', '.json'];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedTypes.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Only PDF, text, docx, doc, xlsx, xls, and csv files are allowed.'));
+      cb(new Error('Invalid file type. Only PDF, text, docx, doc, xlsx, xls, csv, and json files are allowed.'));
     }
   }
 });
@@ -47,7 +47,7 @@ router.get('/', (req, res) => {
     endpoint: '/ingest',
     contentType: 'multipart/form-data',
     fieldName: 'file',
-    acceptedTypes: ['PDF', 'TXT', 'DOCX', 'DOC', 'XLSX', 'XLS', 'CSV'],
+    acceptedTypes: ['PDF', 'TXT', 'DOCX', 'DOC', 'XLSX', 'XLS', 'CSV', 'JSON'],
     maxFileSize: '10MB',
     example: {
       curl: 'curl -X POST http://localhost:5000/ingest -F "file=@document.pdf"'

@@ -15,15 +15,18 @@ async function ragAgent(message) {
     }
 
     // Step 1: Search for similar documents in Pinecone
-    const similarDocs = await searchSimilar(message, 3);
+    // Increase topK for product searches to get more relevant results
+    const isProductQuery = /SKU|product|name|model|price/i.test(message);
+    const topK = isProductQuery ? 5 : 3;
+    const similarDocs = await searchSimilar(message, topK);
 
     // Step 2: Combine top matches into a single context string
     const context = similarDocs
       .map((doc, idx) => `[Context ${idx + 1} from ${doc.source}]: ${doc.text}`)
       .join('\n\n');
 
-    // Step 3: Create system prompt
-    const systemPrompt = 'You are an AI assistant. Use the following context if relevant, otherwise answer normally.';
+    // Step 3: Create system prompt with semantic understanding instructions
+    const systemPrompt = 'You are an AI assistant. Use semantic understanding to match field names and extract information from the context. Field names may appear in different formats (underscores, hyphens, spaces, camelCase) but refer to the same data. For example, "regular-price", "regular_price", and "regular price" all refer to the same field. Extract information based on semantic meaning, not exact string matching. Use the following context if relevant, otherwise answer normally.';
 
     // Step 4: Initialize ChatOpenAI
     const chatModel = new ChatOpenAI({

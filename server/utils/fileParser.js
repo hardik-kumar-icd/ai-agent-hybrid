@@ -7,7 +7,7 @@ let PDFParse;
 /**
  * Detect file type based on extension
  * @param {string} filePath - Path to the file
- * @returns {string} - File type: 'pdf', 'csv', or 'text'
+ * @returns {string} - File type: 'pdf', 'csv', 'json', or 'text'
  */
 function detectFileType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
@@ -17,14 +17,108 @@ function detectFileType(filePath) {
   if (ext === '.csv') {
     return 'csv';
   }
+  if (ext === '.json') {
+    return 'json';
+  }
   return 'text';
 }
 
 /**
- * Extract plain text from a file
- * @param {string} filePath - Path to the file
- * @returns {Promise<string>} - Extracted text content
+ * Parse JSON file and convert to searchable text format
+ * @param {string} filePath - Path to the JSON file
+ * @returns {string} - Formatted text representation of JSON data
  */
+function parseJSON(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(content);
+    
+    // Handle different JSON structures
+    let items = [];
+    
+    // If it's an array, use it directly
+    if (Array.isArray(data)) {
+      items = data;
+    }
+    // If it's an object with an array property (common pattern)
+    else if (typeof data === 'object' && data !== null) {
+      // Check for common array property names
+      const arrayKeys = Object.keys(data).filter(key => Array.isArray(data[key]));
+      if (arrayKeys.length > 0) {
+        // Use the first array found
+        items = data[arrayKeys[0]];
+      } else {
+        // Single object, wrap in array
+        items = [data];
+      }
+    }
+    
+    // Convert each item to searchable text format
+    const textItems = items.map((item, index) => {
+      if (typeof item === 'string') {
+        return item;
+      }
+      
+      if (typeof item === 'object' && item !== null) {
+        // Extract all fields as-is - let AI semantic understanding handle variations
+        const fields = [];
+        
+        // Helper function to format field value
+        const formatValue = (val) => {
+          if (Array.isArray(val)) {
+            if (val.length > 0 && typeof val[0] === 'object') {
+              // Array of objects - extract meaningful fields
+              return val.map(obj => {
+                if (typeof obj === 'object' && obj !== null) {
+                  const objFields = [];
+                  Object.entries(obj).forEach(([k, v]) => {
+                    if (v !== undefined && v !== null) {
+                      if (typeof v === 'object' && !Array.isArray(v)) {
+                        objFields.push(`${k}: ${JSON.stringify(v)}`);
+                      } else {
+                        objFields.push(`${k}: ${v}`);
+                      }
+                    }
+                  });
+                  return objFields.length > 0 ? objFields.join(', ') : JSON.stringify(obj);
+                }
+                return String(obj);
+              }).join('; ');
+            }
+            return val.join(', ');
+          } else if (typeof val === 'object' && val !== null) {
+            // Nested object - extract all fields
+            const objFields = [];
+            Object.entries(val).forEach(([k, v]) => {
+              if (v !== undefined && v !== null) {
+                objFields.push(`${k}: ${v}`);
+              }
+            });
+            return objFields.length > 0 ? objFields.join(', ') : JSON.stringify(val);
+          }
+          return String(val);
+        };
+        
+        // Extract all fields from the item as they are
+        Object.entries(item).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            const formattedValue = formatValue(value);
+            fields.push(`${key}: ${formattedValue}`);
+          }
+        });
+        
+        return fields.join(', ');
+      }
+      
+      return String(item);
+    });
+    
+    return textItems.join('\n\n');
+  } catch (error) {
+    throw new Error(`Failed to parse JSON file: ${error.message}`);
+  }
+}
+
 /**
  * Parse CSV file and convert to searchable text format
  * @param {string} filePath - Path to the CSV file
@@ -52,17 +146,51 @@ function parseCSV(filePath) {
       product[header] = values[index] || '';
     });
     
-    // Format as searchable text: "Product: [Name], SKU: [SKU], Type: [Type], ..."
-    const productText = Object.entries(product)
+    // Prioritize Name and SKU for better searchability
+    // Create a focused product entry with Name and SKU first, then other important fields
+    const name = (product.Name || product.name || '').trim();
+    const sku = (product.SKU || product.sku || '').trim();
+    const id = (product.ID || product.id || '').trim();
+    
+    // Create multiple representations for better searchability:
+    // 1. Focused entry: Name, SKU, and key fields
+    // 2. Full entry: All fields for comprehensive search
+    
+    // Focused entry (prioritized for search)
+    const focusedFields = [];
+    if (name) focusedFields.push(`Product Name: ${name}`);
+    if (sku) focusedFields.push(`SKU: ${sku}`);
+    if (id) focusedFields.push(`Product ID: ${id}`);
+    
+    // Add other important fields
+    const importantFields = ['Type', 'Categories', 'Tags', 'Colour', 'Blind Type', 'Material', 'Features'];
+    importantFields.forEach(field => {
+      const value = product[field] || product[field.toLowerCase()];
+      if (value && String(value).trim()) {
+        focusedFields.push(`${field}: ${String(value).trim()}`);
+      }
+    });
+    
+    // Create focused product text (this will be more searchable)
+    const focusedText = focusedFields.join(', ');
+    
+    // Also create full product text with all fields for comprehensive search
+    const fullProductText = Object.entries(product)
       .filter(([key, value]) => value && value.trim().length > 0)
       .map(([key, value]) => {
-        // Clean up value (remove quotes, handle commas in values)
         const cleanValue = String(value).replace(/^"|"$/g, '').trim();
         return `${key}: ${cleanValue}`;
       })
       .join(', ');
     
-    products.push(productText);
+    // Add both representations - focused first (more likely to match), then full
+    if (focusedText) {
+      products.push(focusedText);
+    }
+    // Add full text as a separate entry for comprehensive search
+    if (fullProductText && fullProductText !== focusedText) {
+      products.push(fullProductText);
+    }
   }
   
   return products.join('\n\n');
@@ -137,6 +265,10 @@ async function extractText(filePath) {
       // Parse CSV file
       const csvText = parseCSV(filePath);
       return cleanText(csvText);
+    } else if (fileType === 'json') {
+      // Parse JSON file
+      const jsonText = parseJSON(filePath);
+      return cleanText(jsonText);
     } else {
       // Read text file
       const text = fs.readFileSync(filePath, 'utf-8');
