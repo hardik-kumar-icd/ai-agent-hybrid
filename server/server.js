@@ -20,6 +20,11 @@ const { requireAdminAuth } = require('./middlewares/auth');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Trust proxy for Render.com and other reverse proxies
+// Set to 1 to trust only the first proxy (Render.com uses one proxy layer)
+// This is more secure than 'true' which trusts all proxies
+app.set('trust proxy', 1);
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -69,10 +74,23 @@ app.use('/visor-chat', visorRoute);
 // Debug endpoint to inspect active sessions (admin only)
 app.get('/api/sessions', requireAdminAuth, (req, res) => {
   try {
+    const { maskEmail, maskOrderId } = require('./utils/securityLogger');
     const sessions = sessionCache.getAll();
+    
+    // Mask sensitive data for display
+    const maskedSessions = {};
+    for (const [id, session] of Object.entries(sessions)) {
+      maskedSessions[id] = {
+        order_id: session.order_id ? maskOrderId(session.order_id) : null,
+        email: session.email ? maskEmail(session.email) : null,
+        lastAccessed: session.lastAccessed
+      };
+    }
+    
     res.json({
       activeSessions: Object.keys(sessions).length,
-      sessions: sessions
+      sessions: maskedSessions,
+      note: 'Sensitive data is masked for security. Check server logs for full details.'
     });
   } catch (error) {
     res.status(500).json({
