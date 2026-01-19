@@ -1,6 +1,7 @@
 const axios = require('axios');
 const platformConfig = require('../config/platform');
 const { sanitizeOrderData } = require('../utils/piiFilter');
+const { logOrderLookup } = require('../utils/securityLogger');
 
 /**
  * Tool: get_order_status
@@ -12,6 +13,9 @@ async function getOrderStatusTool({ order_id, email }) {
     if (!order_id || !email) {
       throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
     }
+
+    // Log order lookup with masked data
+    logOrderLookup(order_id, email, '[getOrderStatusTool]');
 
     const { platform, endpoints, auth } = platformConfig;
     let orderData;

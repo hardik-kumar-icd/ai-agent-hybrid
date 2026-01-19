@@ -10,6 +10,9 @@ const fileRoute = require('./routes/fileRoute');
 const visorRoute = require('./routes/visorRoute');
 const { ragAgent } = require('./agents/ragAgent');
 
+// Import rate limiters
+const { globalLimiter, ingestLimiter } = require('./middlewares/rateLimiter');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -39,6 +42,9 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Apply global rate limiter (60 requests per minute per IP)
+app.use(globalLimiter);
+
 // Basic route
 app.get('/', (req, res) => {
   res.json({ message: 'Server is running!' });
@@ -47,8 +53,11 @@ app.get('/', (req, res) => {
 // Chat route
 app.use('/chat', chatRoute);
 
-// File ingestion route (RAG)
+// File ingestion route (RAG) - Legacy endpoint
 app.use('/ingest', fileRoute);
+
+// File ingestion route (RAG) - Admin API endpoint with rate limiting (10 requests per minute)
+app.use('/api/ingest', ingestLimiter, fileRoute);
 
 // Visor.no AI Agent route
 app.use('/visor-chat', visorRoute);
@@ -330,9 +339,32 @@ app.use((error, req, res, next) => {
   next(error);
 });
 
+// Graceful shutdown handler
+const { sessionCache } = require('./middlewares/session');
+
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  sessionCache.destroy();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  sessionCache.destroy();
+  process.exit(0);
+});
+
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   const maxFileSizeMB = parseInt(process.env.MAX_FILE_SIZE_MB || '10', 10);
   console.log(`Server is running on http://localhost:${PORT}`);
   console.log(`Max file size limit: ${maxFileSizeMB}MB`);
+  console.log('Rate limiter active (global: 60/min, ingest: 10/min)');
+  if (process.env.ADMIN_API_KEY) {
+    console.log('Admin authentication enabled');
+  } else {
+    console.warn('WARNING: ADMIN_API_KEY not set - admin routes are unprotected');
+  }
 });
+
+module.exports = server;

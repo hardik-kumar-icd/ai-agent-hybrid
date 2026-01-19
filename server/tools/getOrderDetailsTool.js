@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { sanitizeOrderData } = require('../utils/piiFilter');
 const { getOrderStatusTool } = require('./getOrderStatusTool');
+const { logOrderLookup } = require('../utils/securityLogger');
 
 /**
  * Tool: get_order_details
@@ -14,6 +15,9 @@ async function getOrderDetailsTool({ order_id, email }) {
     if (!order_id || !email) {
       throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
     }
+
+    // Log order lookup with masked data
+    logOrderLookup(order_id, email, '[getOrderDetailsTool]');
 
     // Read orders from JSON file
     const ordersPath = path.join(__dirname, '..', 'data', 'orders.json');

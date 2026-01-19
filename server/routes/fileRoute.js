@@ -6,6 +6,8 @@ const fs = require('fs');
 const { extractText } = require('../utils/fileParser');
 const { splitText } = require('../utils/textSplitter');
 const { embedAndStore } = require('../utils/embeddingService');
+const { requireAdminAuth } = require('../middlewares/auth');
+const { logApiRequest } = require('../utils/securityLogger');
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -55,8 +57,8 @@ router.get('/', (req, res) => {
   });
 });
 
-// POST /ingest endpoint
-router.post('/', upload.single('file'), async (req, res) => {
+// POST /ingest endpoint - Admin only
+router.post('/', requireAdminAuth, upload.single('file'), async (req, res) => {
   let filePath = null;
   
   try {

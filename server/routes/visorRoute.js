@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const { processVisorMessage } = require('../agents/visorAgent');
+const { validateMessage } = require('../middlewares/validation');
+const { sessionMiddleware } = require('../middlewares/session');
+const { logApiRequest, logOrderLookup } = require('../utils/securityLogger');
 
 // GET handler for endpoint info
 router.get('/', (req, res) => {
@@ -25,35 +28,44 @@ router.get('/', (req, res) => {
 });
 
 // POST /visor-chat endpoint
-router.post('/', async (req, res) => {
+router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
   try {
     const { message, email, order_id } = req.body;
 
-    // Validate required fields
-    if (!message) {
-      return res.status(400).json({ 
-        error: 'Message is required',
-        example: {
-          message: 'What is the status of order 5501?',
-          email: 'user@example.com',  // Optional: can be provided here or in message
-          order_id: '5501'  // Optional: can be provided here or in message
-        }
+    // Log API request with masked sensitive data
+    logApiRequest(req, '/visor-chat');
+
+    // Get session data if available
+    const sessionData = req.session.get();
+    
+    // Use provided values or fall back to session data
+    const finalOrderId = order_id || sessionData?.order_id || null;
+    const finalEmail = email || sessionData?.email || null;
+
+    // Update session if new order_id or email provided
+    if (order_id || email) {
+      req.session.update({
+        order_id: order_id || undefined,
+        email: email || undefined
       });
     }
 
-    // Build enhanced message with context if email/order_id provided
+    // Log order lookup if order_id and email are present
+    if (finalOrderId && finalEmail) {
+      logOrderLookup(finalOrderId, finalEmail, '[Visor Route] Order lookup');
+    }
+
+    // Build enhanced message with context if email/order_id available
     let enhancedMessage = message;
-    if (email || order_id) {
+    if (finalOrderId || finalEmail) {
       const context = [];
-      if (order_id) context.push(`Order ID: ${order_id}`);
-      if (email) context.push(`Email: ${email}`);
+      if (finalOrderId) context.push(`Order ID: ${finalOrderId}`);
+      if (finalEmail) context.push(`Email: ${finalEmail}`);
       enhancedMessage = `${message}\n\n[Context: ${context.join(', ')}]`;
     }
 
     // Process message through Visor agent
-    console.log(`[Visor Route] Processing message:`, { message, email, order_id });
     const reply = await processVisorMessage(enhancedMessage);
-    console.log(`[Visor Route] Response generated successfully`);
 
     // Return response
     res.json({
