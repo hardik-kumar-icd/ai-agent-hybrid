@@ -13,6 +13,10 @@ const { ragAgent } = require('./agents/ragAgent');
 // Import rate limiters
 const { globalLimiter, ingestLimiter } = require('./middlewares/rateLimiter');
 
+// Import session cache and auth for debug endpoints
+const { sessionCache } = require('./middlewares/session');
+const { requireAdminAuth } = require('./middlewares/auth');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -61,6 +65,22 @@ app.use('/api/ingest', ingestLimiter, fileRoute);
 
 // Visor.no AI Agent route
 app.use('/visor-chat', visorRoute);
+
+// Debug endpoint to inspect active sessions (admin only)
+app.get('/api/sessions', requireAdminAuth, (req, res) => {
+  try {
+    const sessions = sessionCache.getAll();
+    res.json({
+      activeSessions: Object.keys(sessions).length,
+      sessions: sessions
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to retrieve sessions',
+      message: error.message
+    });
+  }
+});
 
 // Test endpoint for WooCommerce API connectivity
 app.get('/test-woocommerce', async (req, res) => {
@@ -340,8 +360,6 @@ app.use((error, req, res, next) => {
 });
 
 // Graceful shutdown handler
-const { sessionCache } = require('./middlewares/session');
-
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully...');
   sessionCache.destroy();
