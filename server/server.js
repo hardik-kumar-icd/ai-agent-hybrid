@@ -24,10 +24,13 @@ const storage = multer.diskStorage({
   }
 });
 
+// File size limit from environment variable (default: 10MB)
+const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE_MB || '10', 10) * 1024 * 1024;
+
 const upload = multer({ 
   storage: storage,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
+    fileSize: MAX_FILE_SIZE
   }
 });
 
@@ -202,13 +205,14 @@ app.post('/rag', async (req, res) => {
 
 // Upload route - GET handler for info
 app.get('/upload', (req, res) => {
+  const maxFileSizeMB = parseInt(process.env.MAX_FILE_SIZE_MB || '10', 10);
   res.json({
     message: 'Upload endpoint - Use POST method',
     method: 'POST',
     endpoint: '/upload',
     contentType: 'multipart/form-data',
     fieldName: 'file',
-    maxFileSize: '10MB',
+    maxFileSize: `${maxFileSizeMB}MB`,
     example: {
       curl: 'curl -X POST http://localhost:5000/upload -F "file=@yourfile.txt"'
     }
@@ -246,7 +250,89 @@ app.post('/upload', upload.single('file'), (req, res) => {
   }
 });
 
+// Error-handling middleware for Multer errors (must be after all routes)
+app.use((error, req, res, next) => {
+  // Handle Multer errors
+  if (error instanceof multer.MulterError) {
+    let statusCode = 400;
+    let message = 'File upload error';
+    let details = {};
+
+    switch (error.code) {
+      case 'LIMIT_FILE_SIZE':
+        const maxFileSizeMB = parseInt(process.env.MAX_FILE_SIZE_MB || '10', 10);
+        statusCode = 413; // Payload Too Large
+        message = `File size exceeds the maximum allowed size of ${maxFileSizeMB}MB`;
+        details = {
+          code: error.code,
+          maxFileSize: `${maxFileSizeMB}MB`,
+          maxFileSizeBytes: MAX_FILE_SIZE
+        };
+        break;
+      case 'LIMIT_FILE_COUNT':
+        statusCode = 400;
+        message = 'Too many files uploaded';
+        details = { code: error.code };
+        break;
+      case 'LIMIT_FIELD_KEY':
+        statusCode = 400;
+        message = 'Field name too long';
+        details = { code: error.code };
+        break;
+      case 'LIMIT_FIELD_VALUE':
+        statusCode = 400;
+        message = 'Field value too long';
+        details = { code: error.code };
+        break;
+      case 'LIMIT_FIELD_COUNT':
+        statusCode = 400;
+        message = 'Too many fields';
+        details = { code: error.code };
+        break;
+      case 'LIMIT_PART_COUNT':
+        statusCode = 400;
+        message = 'Too many parts';
+        details = { code: error.code };
+        break;
+      case 'LIMIT_UNEXPECTED_FILE':
+        statusCode = 400;
+        message = 'Unexpected file field';
+        details = { code: error.code, field: error.field };
+        break;
+      case 'MISSING_FIELD_NAME':
+        statusCode = 400;
+        message = 'Missing field name';
+        details = { code: error.code };
+        break;
+      default:
+        statusCode = 400;
+        message = 'File upload error';
+        details = { code: error.code || 'UNKNOWN' };
+    }
+
+    return res.status(statusCode).json({
+      error: 'File upload failed',
+      message: message,
+      details: details
+    });
+  }
+
+  // Handle other errors
+  if (error) {
+    console.error('Unhandled error:', error);
+    return res.status(error.status || 500).json({
+      error: 'Internal server error',
+      message: error.message || 'An unexpected error occurred'
+    });
+  }
+
+  // Pass to next error handler if not handled
+  next(error);
+});
+
 // Start server
 app.listen(PORT, () => {
+  const maxFileSizeMB = parseInt(process.env.MAX_FILE_SIZE_MB || '10', 10);
   console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Max file size limit: ${maxFileSizeMB}MB`);
 });
