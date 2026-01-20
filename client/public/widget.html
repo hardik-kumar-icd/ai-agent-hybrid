@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Visor AI Chat Widget</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    }
+    #visor-chat-widget {
+      position: fixed;
+      bottom: 0;
+      right: 0;
+    }
+  </style>
+</head>
+<body>
+  <!-- Widget Container -->
+  <div id="visor-chat-widget" 
+       data-api-base="https://ai-agent-hybrid.onrender.com"
+       data-theme-color="#667eea"
+       data-accent-color="#764ba2">
+  </div>
+
+  <!-- Load React and ReactDOM from CDN (for standalone widget) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Load widget bundle -->
+  <script src="%PUBLIC_URL%/widget.bundle.js"></script>
+  
+  <!-- Initialize widget -->
+  <script>
+    // Wait for widget script to load
+    if (window.VisorAIWidget) {
+      window.VisorAIWidget.init({
+        selector: '#visor-chat-widget'
+      });
+    } else {
+      window.addEventListener('load', function() {
+        if (window.VisorAIWidget) {
+          window.VisorAIWidget.init({
+            selector: '#visor-chat-widget'
+          });
+        }
+      });
+    }
+  </script>
+</body>
+</html>

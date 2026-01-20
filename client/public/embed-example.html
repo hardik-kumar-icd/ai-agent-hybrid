@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visor AI Chat Widget - Embed Example</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 40px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #333;
+    }
+    .info {
+      background: #f0f0f0;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+    code {
+      background: #e9ecef;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+    }
+  </style>
+</head>
+<body>
+  <h1>Visor AI Chat Widget - Embed Example</h1>
+  
+  <div class="info">
+    <h2>How to Embed</h2>
+    <p>Add this code to your WordPress or Magento site:</p>
+    
+    <h3>User Mode (Chat Widget):</h3>
+    <pre><code>&lt;div id="visor-ai-widget"
+     data-base-url="YOUR_API_URL"
+     data-admin="false"&gt;
+&lt;/div&gt;
+
+&lt;script src="widget.bundle.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  window.VisorAIWidget.initFromElement('#visor-ai-widget');
+&lt;/script&gt;</code></pre>
+
+    <h3>Admin Mode (File Upload):</h3>
+    <pre><code>&lt;div id="visor-ai-widget"
+     data-base-url="YOUR_API_URL"
+     data-admin="true"
+     data-token="your-admin-token-here"&gt;
+&lt;/div&gt;
+
+&lt;script src="widget.bundle.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  window.VisorAIWidget.initFromElement('#visor-ai-widget');
+&lt;/script&gt;</code></pre>
+  </div>
+
+  <!-- Widget Container - User Mode Example -->
+  <div id="visor-ai-widget"
+       data-base-url="http://localhost:5000"
+       data-admin="false">
+  </div>
+
+  <!-- For development: Load React from CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Note: In production, load widget.bundle.js from your CDN -->
+  <!-- For local testing, you'll need to build the widget separately -->
+  
+  <script>
+    // Example initialization (when widget bundle is loaded)
+    // Uncomment when widget.bundle.js is available:
+    // window.VisorAIWidget.initFromElement('#visor-ai-widget');
+    
+    console.log('To use the widget, build it and load widget.bundle.js, then uncomment the initFromElement call above');
+  </script>
+</body>
+</html>

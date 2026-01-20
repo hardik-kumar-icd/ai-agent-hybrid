@@ -1,23 +1,20 @@
-import logo from './logo.svg';
+import React from 'react';
+import ChatWidget from './components/ChatWidget';
 import './App.css';
 
 function App() {
+  // For standalone app testing, use environment variable or default
+  const baseUrl = process.env.REACT_APP_API_BASE_URL || 'https://ai-agent-hybrid.onrender.com';
+  
   return (
     <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+      <ChatWidget 
+        baseUrl={baseUrl}
+        themeColor="#667eea"
+        accentColor="#764ba2"
+        mode="user"
+        adminToken={process.env.REACT_APP_ADMIN_TOKEN}
+      />
     </div>
   );
 }
