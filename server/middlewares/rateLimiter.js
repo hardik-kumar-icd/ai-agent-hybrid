@@ -18,6 +18,10 @@ const globalLimiter = rateLimit({
   },
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  // Skip trust proxy validation - trust proxy is set in server.js
+  validate: {
+    trustProxy: false
+  },
   handler: (req, res) => {
     // Calculate retry_after in seconds
     // req.rateLimit.resetTime is the timestamp when the rate limit will reset
@@ -44,6 +48,10 @@ const ingestLimiter = rateLimit({
   },
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  // Skip trust proxy validation - trust proxy is set in server.js
+  validate: {
+    trustProxy: false
+  },
   handler: (req, res) => {
     // Calculate retry_after in seconds
     // req.rateLimit.resetTime is the timestamp when the rate limit will reset
