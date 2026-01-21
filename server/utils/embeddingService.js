@@ -107,9 +107,10 @@ async function embedAndStore(docs, sourceName) {
     const vectors = await embeddings.embedDocuments(texts);
 
     // Prepare vectors for upsert
+    const uploadTimestamp = Date.now();
     const vectorsToUpsert = vectors.map((embedding, idx) => {
       const doc = docs[idx];
-      const chunkId = `${sourceName}_chunk_${idx}_${Date.now()}`;
+      const chunkId = `${sourceName}_chunk_${idx}_${uploadTimestamp}`;
       
       return {
         id: chunkId,
@@ -118,6 +119,7 @@ async function embedAndStore(docs, sourceName) {
           source: sourceName,
           chunk_id: chunkId,
           text: doc.pageContent || doc,
+          upload_timestamp: uploadTimestamp, // Add timestamp for prioritizing recent uploads
         },
       };
     });
@@ -134,6 +136,7 @@ async function embedAndStore(docs, sourceName) {
 
 /**
  * Search for similar vectors in Pinecone
+ * Prioritizes recent uploads by fetching more results and sorting by timestamp
  * @param {string} query - Query text to search for
  * @param {number} topK - Number of top results to return (default: 3)
  * @returns {Promise<Array>} - Array of similar documents with metadata
@@ -152,30 +155,122 @@ async function searchSimilar(query, topK = 3) {
     // Generate embedding for the query
     const queryEmbedding = await embeddings.embedQuery(query);
 
+    // Fetch significantly more results (topK * 5) to ensure we capture new uploads
+    // This is critical because new uploads might have lower semantic similarity scores
+    // but should still be prioritized over old data
+    const fetchCount = Math.max(topK * 5, 20);
+    
     // Query Pinecone for similar vectors
     const queryResponse = await index.query({
       vector: queryEmbedding,
-      topK: topK,
+      topK: fetchCount,
       includeMetadata: true,
     });
 
-    // Extract and return the matches
-    const results = queryResponse.matches.map(match => ({
+    // Extract matches with metadata
+    const allResults = queryResponse.matches.map(match => ({
       score: match.score,
       text: match.metadata?.text || '',
       source: match.metadata?.source || '',
       chunkId: match.metadata?.chunk_id || match.id,
+      uploadTimestamp: match.metadata?.upload_timestamp || 0, // Default to 0 for old data without timestamp
     }));
 
-    return results;
+    // AGGRESSIVE RECENCY PRIORITIZATION:
+    // Separate results into "new" (has timestamp > 0) and "old" (timestamp = 0)
+    const newResults = allResults.filter(r => r.uploadTimestamp > 0);
+    const oldResults = allResults.filter(r => r.uploadTimestamp === 0);
+
+    // Sort new results by timestamp (newest first), then by score
+    newResults.sort((a, b) => {
+      if (a.uploadTimestamp !== b.uploadTimestamp) {
+        return b.uploadTimestamp - a.uploadTimestamp; // Newest first
+      }
+      return b.score - a.score; // Higher score first
+    });
+
+    // Sort old results by score only
+    oldResults.sort((a, b) => b.score - a.score);
+
+    // STRATEGY: Prioritize new uploads heavily
+    // If we have new results, use them first (even if scores are lower)
+    // Only fill remaining slots with old results if needed
+    let finalResults = [];
+    
+    if (newResults.length > 0) {
+      // We have new uploads - prioritize them heavily
+      // Take up to topK from new results
+      const newCount = Math.min(newResults.length, topK);
+      finalResults = newResults.slice(0, newCount);
+      
+      // If we need more results and have old results, add them
+      if (finalResults.length < topK && oldResults.length > 0) {
+        const remainingSlots = topK - finalResults.length;
+        finalResults = finalResults.concat(oldResults.slice(0, remainingSlots));
+      }
+      
+      console.log(`[RAG Search] Query: "${query}" | Prioritizing ${newResults.length} new upload(s) over ${oldResults.length} old result(s)`);
+    } else {
+      // No new uploads - fall back to old results
+      finalResults = oldResults.slice(0, topK);
+      console.log(`[RAG Search] Query: "${query}" | No new uploads found, using ${finalResults.length} old result(s)`);
+    }
+
+    // Remove uploadTimestamp from final results
+    finalResults = finalResults.map(({ uploadTimestamp, ...rest }) => rest);
+
+    // Log for debugging (only if multiple sources found)
+    const uniqueSources = [...new Set(finalResults.map(r => r.source))];
+    if (uniqueSources.length > 1) {
+      console.log(`[RAG Search] Query: "${query}" | Found ${finalResults.length} results from ${uniqueSources.length} sources:`, uniqueSources);
+    }
+
+    return finalResults;
   } catch (error) {
     console.error('Error in searchSimilar:', error);
     throw new Error(`Failed to search similar documents: ${error.message}`);
   }
 }
 
+/**
+ * Delete all vectors from Pinecone index
+ * WARNING: This permanently deletes ALL data from the index
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+async function deleteAllVectors() {
+  try {
+    const index = await initializePinecone();
+    
+    // Delete all vectors from the default namespace
+    // Using deleteAll() method (available in Pinecone SDK v1.0+)
+    // For default namespace, we can use deleteAll() directly
+    try {
+      // Try the newer deleteAll() method first
+      await index.deleteAll();
+    } catch (error) {
+      // Fallback: If deleteAll() doesn't exist, use delete with deleteAll: true
+      if (error.message.includes('deleteAll') || error.message.includes('not a function')) {
+        // Alternative method: delete with deleteAll parameter
+        await index.delete({ deleteAll: true });
+      } else {
+        throw error;
+      }
+    }
+    
+    console.log('[Pinecone] All vectors deleted successfully');
+    return {
+      success: true,
+      message: 'All vectors deleted successfully from Pinecone index'
+    };
+  } catch (error) {
+    console.error('Error deleting all vectors:', error);
+    throw new Error(`Failed to delete all vectors: ${error.message}`);
+  }
+}
+
 module.exports = {
   embedAndStore,
   searchSimilar,
-  initializePinecone
+  initializePinecone,
+  deleteAllVectors
 };

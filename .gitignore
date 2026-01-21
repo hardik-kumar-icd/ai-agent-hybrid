@@ -21,3 +21,6 @@ logs/
 
 # Uploads
 server/uploads/
+
+# React build outputs
+client/dist/

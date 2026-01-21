@@ -10,6 +10,7 @@ const fileRoute = require('./routes/fileRoute');
 const visorRoute = require('./routes/visorRoute');
 const envVerifyRoute = require('./routes/envVerifyRoute');
 const { ragAgent } = require('./agents/ragAgent');
+const { deleteAllVectors } = require('./utils/embeddingService');
 
 // Import rate limiters
 const { globalLimiter, ingestLimiter } = require('./middlewares/rateLimiter');
@@ -74,6 +75,96 @@ app.use('/visor-chat', visorRoute);
 
 // Environment verification endpoint (admin only)
 app.use('/api/verify-env', requireAdminAuth, envVerifyRoute);
+
+// Admin endpoint to clear all Pinecone vectors (admin only)
+// WARNING: This permanently deletes ALL data from Pinecone
+app.delete('/api/pinecone/clear', requireAdminAuth, async (req, res) => {
+  try {
+    const result = await deleteAllVectors();
+    res.json({
+      success: true,
+      message: result.message,
+      warning: 'All vectors have been deleted from Pinecone. You can now upload fresh data.'
+    });
+  } catch (error) {
+    console.error('Error clearing Pinecone:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to clear Pinecone vectors',
+      message: error.message
+    });
+  }
+});
+
+// Admin endpoint to check what's in Pinecone (debug)
+app.get('/api/pinecone/debug', requireAdminAuth, async (req, res) => {
+  try {
+    const { initializePinecone } = require('./utils/embeddingService');
+    const index = await initializePinecone();
+    
+    // Query with a dummy vector to see what's stored
+    const dummyVector = new Array(3072).fill(0);
+    const queryResponse = await index.query({
+      vector: dummyVector,
+      topK: 10,
+      includeMetadata: true,
+    });
+    
+    const results = queryResponse.matches.map(match => ({
+      id: match.id,
+      score: match.score,
+      source: match.metadata?.source || 'unknown',
+      uploadTimestamp: match.metadata?.upload_timestamp || 0,
+      textPreview: (match.metadata?.text || '').substring(0, 100),
+    }));
+    
+    res.json({
+      totalFound: queryResponse.matches.length,
+      results: results,
+      message: queryResponse.matches.length === 0 
+        ? 'Pinecone index is empty. Upload files to add data.'
+        : `Found ${queryResponse.matches.length} vectors in Pinecone.`
+    });
+  } catch (error) {
+    console.error('Error checking Pinecone:', error);
+    res.status(500).json({
+      error: 'Failed to check Pinecone',
+      message: error.message
+    });
+  }
+});
+
+// Admin endpoint to test semantic search with actual query
+app.get('/api/pinecone/test-search', requireAdminAuth, async (req, res) => {
+  try {
+    const { searchSimilar } = require('./utils/embeddingService');
+    const query = req.query.q || 'What products do you have?';
+    
+    console.log(`[Test Search] Testing query: "${query}"`);
+    const results = await searchSimilar(query, 5);
+    
+    res.json({
+      query: query,
+      resultsFound: results.length,
+      results: results.map((r, idx) => ({
+        rank: idx + 1,
+        score: r.score,
+        source: r.source,
+        textPreview: r.text.substring(0, 200),
+        fullText: r.text
+      })),
+      message: results.length === 0 
+        ? 'No results found for this query. Try a different search term.'
+        : `Found ${results.length} results for "${query}"`
+    });
+  } catch (error) {
+    console.error('Error testing search:', error);
+    res.status(500).json({
+      error: 'Failed to test search',
+      message: error.message
+    });
+  }
+});
 
 // Debug endpoint to inspect active sessions (admin only)
 app.get('/api/sessions', requireAdminAuth, (req, res) => {
