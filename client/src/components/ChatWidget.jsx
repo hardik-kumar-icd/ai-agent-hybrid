@@ -89,7 +89,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     setError(null);
 
     try {
-      const apiBaseUrl = baseUrl || process.env.REACT_APP_API_BASE_URL || 'https://ai-agent-hybrid.onrender.com';
+      const apiBaseUrl = baseUrl || 'https://ai-agent-hybrid.onrender.com';
       const response = await fetch(`${apiBaseUrl}/visor-chat`, {
         method: 'POST',
         headers: {

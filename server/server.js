@@ -78,13 +78,21 @@ app.use('/api/verify-env', requireAdminAuth, envVerifyRoute);
 
 // Admin endpoint to clear all Pinecone vectors (admin only)
 // WARNING: This permanently deletes ALL data from Pinecone
-app.delete('/api/pinecone/clear', requireAdminAuth, async (req, res) => {
+// Supports DELETE, GET, and POST methods for flexibility
+// Optional query parameter: ?namespace=name to clear specific namespace
+const handleClearPinecone = async (req, res) => {
   try {
-    const result = await deleteAllVectors();
+    // Get namespace from query params or body
+    const namespace = req.query.namespace || req.body?.namespace || '';
+    
+    const result = await deleteAllVectors(namespace);
     res.json({
       success: true,
       message: result.message,
-      warning: 'All vectors have been deleted from Pinecone. You can now upload fresh data.'
+      warning: namespace 
+        ? `All vectors have been deleted from namespace '${namespace}'. You can now upload fresh data.`
+        : 'All vectors have been deleted from Pinecone. You can now upload fresh data.',
+      namespace: namespace || 'default'
     });
   } catch (error) {
     console.error('Error clearing Pinecone:', error);
@@ -94,7 +102,11 @@ app.delete('/api/pinecone/clear', requireAdminAuth, async (req, res) => {
       message: error.message
     });
   }
-});
+};
+
+app.delete('/api/pinecone/clear', requireAdminAuth, handleClearPinecone);
+app.get('/api/pinecone/clear', requireAdminAuth, handleClearPinecone);
+app.post('/api/pinecone/clear', requireAdminAuth, handleClearPinecone);
 
 // Admin endpoint to check what's in Pinecone (debug)
 app.get('/api/pinecone/debug', requireAdminAuth, async (req, res) => {

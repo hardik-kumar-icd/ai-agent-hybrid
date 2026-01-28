@@ -235,32 +235,26 @@ async function searchSimilar(query, topK = 3) {
 /**
  * Delete all vectors from Pinecone index
  * WARNING: This permanently deletes ALL data from the index
+ * @param {string} namespace - Optional namespace to clear (defaults to default namespace)
  * @returns {Promise<{success: boolean, message: string}>}
  */
-async function deleteAllVectors() {
+async function deleteAllVectors(namespace = '') {
   try {
     const index = await initializePinecone();
     
-    // Delete all vectors from the default namespace
-    // Using deleteAll() method (available in Pinecone SDK v1.0+)
-    // For default namespace, we can use deleteAll() directly
-    try {
-      // Try the newer deleteAll() method first
-      await index.deleteAll();
-    } catch (error) {
-      // Fallback: If deleteAll() doesn't exist, use delete with deleteAll: true
-      if (error.message.includes('deleteAll') || error.message.includes('not a function')) {
-        // Alternative method: delete with deleteAll parameter
-        await index.delete({ deleteAll: true });
-      } else {
-        throw error;
-      }
-    }
+    // Pinecone SDK v6.x has deleteAll() method directly on the index
+    // Get the namespace-specific index if namespace is provided
+    const targetIndex = namespace ? index.namespace(namespace) : index;
     
-    console.log('[Pinecone] All vectors deleted successfully');
+    // Use deleteAll() method (Pinecone SDK v6.x)
+    await targetIndex.deleteAll();
+    
+    const namespaceMsg = namespace ? ` from namespace '${namespace}'` : '';
+    console.log(`[Pinecone] All vectors deleted successfully${namespaceMsg}`);
+    
     return {
       success: true,
-      message: 'All vectors deleted successfully from Pinecone index'
+      message: `All vectors deleted successfully from Pinecone index${namespaceMsg}`
     };
   } catch (error) {
     console.error('Error deleting all vectors:', error);

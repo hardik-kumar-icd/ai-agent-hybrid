@@ -13,14 +13,12 @@ function AdminPanel({ baseUrl, adminToken }) {
   const [testResponse, setTestResponse] = useState('');
   const [testing, setTesting] = useState(false);
 
-  const apiBaseUrl = baseUrl || process.env.REACT_APP_API_BASE_URL || 'https://ai-agent-hybrid.onrender.com';
+  const apiBaseUrl = baseUrl || 'https://ai-agent-hybrid.onrender.com';
   
-  // Get token: prop > env > localStorage (don't prompt on mount, only when needed)
+  // Get token: prop > localStorage (don't prompt on mount, only when needed)
   const [token, setToken] = useState(() => {
     // First check prop
     if (adminToken) return adminToken;
-    // Then check env
-    if (process.env.REACT_APP_ADMIN_TOKEN) return process.env.REACT_APP_ADMIN_TOKEN;
     // Then check localStorage
     const savedToken = localStorage.getItem('visor_admin_token');
     return savedToken || null;
