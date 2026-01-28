@@ -24,3 +24,6 @@ server/uploads/
 
 # React build outputs
 client/dist/
+
+#Change log
+CHANGELOG.md
