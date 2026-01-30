@@ -24,6 +24,62 @@ function detectFileType(filePath) {
 }
 
 /**
+ * Normalize a name/title string for better semantic and keyword match (e.g. "V-Standard plissegardin" vs "V-Standard Up & Down Plissegardin").
+ * Structure-agnostic: applied to any name-like or title-like field.
+ */
+function normalizeForSearch(s) {
+  if (typeof s !== 'string') return '';
+  return s
+    .replace(/\s*\([^)]*\)/g, ' ')
+    .replace(/\s*&\s*/g, ' ')
+    .replace(/[\s.-]+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/** Keys that typically hold a name/title; we add a normalized searchable form for these */
+const NAME_LIKE_KEYS = new Set(['name', 'title', 'product_name', 'productname', 'question', 'heading']);
+
+/**
+ * Flatten an object into "key: value" parts for a searchable summary line.
+ * Structure-agnostic: works for products, FAQs, docs, or any JSON shape.
+ * Uses top-level keys and one level of nesting (e.g. attributes.type).
+ * For name/title-like fields, also adds a normalized form so partial names match (e.g. "V-Standard plissegardin").
+ */
+function flattenToSummaryParts(obj, prefix = '') {
+  const parts = [];
+  if (!obj || typeof obj !== 'object') return parts;
+
+  const scalar = (v) => v === null || v === undefined || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
+
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined || value === null) continue;
+    const label = prefix ? `${prefix}.${key}` : key;
+    const keyLower = key.toLowerCase();
+
+    if (Array.isArray(value)) {
+      if (value.length > 0) {
+        const first = value[0];
+        if (scalar(first)) parts.push(`${label}: ${value.join(', ')}`);
+        else if (typeof first === 'object') parts.push(`${label}: ${value.map(v => typeof v === 'object' && v !== null ? flattenToSummaryParts(v, label).join('; ') : String(v)).join('; ')}`);
+      }
+    } else if (typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        if (v !== undefined && v !== null && scalar(v)) parts.push(`${label}.${k}: ${v}`);
+        else if (Array.isArray(v) && v.every(scalar)) parts.push(`${label}.${k}: ${v.join(', ')}`);
+      }
+    } else {
+      parts.push(`${label}: ${value}`);
+      if (typeof value === 'string' && NAME_LIKE_KEYS.has(keyLower)) {
+        const norm = normalizeForSearch(value);
+        if (norm && norm !== value.toLowerCase()) parts.push(`searchable: ${norm}`);
+      }
+    }
+  }
+  return parts;
+}
+
+/**
  * Parse JSON file and convert to searchable text format
  * @param {string} filePath - Path to the JSON file
  * @returns {string} - Formatted text representation of JSON data
@@ -53,21 +109,24 @@ function parseJSON(filePath) {
       }
     }
     
-    // Convert each item to searchable text format
+    // Convert each item to searchable text format (structure-agnostic: works for products, FAQs, docs, etc.)
     const textItems = items.map((item, index) => {
       if (typeof item === 'string') {
         return item;
       }
       
       if (typeof item === 'object' && item !== null) {
-        // Extract all fields as-is - let AI semantic understanding handle variations
+        // Build one searchable summary line from whatever keys exist (no schema-specific logic)
+        const summaryParts = flattenToSummaryParts(item);
         const fields = [];
-        
+        if (summaryParts.length > 0) {
+          fields.push(summaryParts.join('. '));
+        }
+
         // Helper function to format field value
         const formatValue = (val) => {
           if (Array.isArray(val)) {
             if (val.length > 0 && typeof val[0] === 'object') {
-              // Array of objects - extract meaningful fields
               return val.map(obj => {
                 if (typeof obj === 'object' && obj !== null) {
                   const objFields = [];
@@ -87,7 +146,6 @@ function parseJSON(filePath) {
             }
             return val.join(', ');
           } else if (typeof val === 'object' && val !== null) {
-            // Nested object - extract all fields
             const objFields = [];
             Object.entries(val).forEach(([k, v]) => {
               if (v !== undefined && v !== null) {
@@ -98,15 +156,14 @@ function parseJSON(filePath) {
           }
           return String(val);
         };
-        
-        // Extract all fields from the item as they are
+
         Object.entries(item).forEach(([key, value]) => {
           if (value !== undefined && value !== null) {
             const formattedValue = formatValue(value);
             fields.push(`${key}: ${formattedValue}`);
           }
         });
-        
+
         return fields.join(', ');
       }
       

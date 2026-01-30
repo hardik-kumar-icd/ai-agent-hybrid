@@ -7,11 +7,11 @@ const { RecursiveCharacterTextSplitter } = require('@langchain/textsplitters');
  */
 async function splitText(text) {
   try {
-    // Detect if input text is likely product data (contains "Product Name:" and "SKU:")
-    // Use larger chunks for product data to keep product entries together
-    const isProductData = text.includes('Product Name:') && text.includes('SKU:');
-    const chunkSize = isProductData ? 2000 : 1000;
-    const chunkOverlap = isProductData ? 300 : 200;
+    // Structure-agnostic: if text looks like multiple records (blocks separated by double newline), use larger chunks
+    const blocks = text.split(/\n\n+/);
+    const hasStructuredRecords = blocks.length >= 2 && blocks.some(b => /^\s*\w+:\s*.+/.test(b));
+    const chunkSize = hasStructuredRecords ? 1800 : 1200;
+    const chunkOverlap = hasStructuredRecords ? 400 : 250;
     
     const textSplitter = new RecursiveCharacterTextSplitter({
       chunkSize: chunkSize,

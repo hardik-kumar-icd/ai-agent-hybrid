@@ -46,28 +46,47 @@ function ChatMessage({ message, role, isLoading = false }) {
 }
 
 /**
- * Format message text - convert markdown bold to HTML
+ * Format message text - convert markdown (bold, links) to HTML
  */
 function formatMessage(text) {
   if (!text) return '';
-  
-  // Escape HTML to prevent XSS
+
   const escapeHtml = (str) => {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
   };
-  
-  // Escape all HTML first
-  let escaped = escapeHtml(text);
-  
-  // Convert **text** to <strong>text</strong>
-  escaped = escaped.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  
-  // Convert line breaks to <br>
-  escaped = escaped.replace(/\n/g, '<br>');
-  
-  return escaped;
+
+  const isSafeUrl = (url) => /^https?:\/\/[^\s<>"']+$/i.test((url || '').trim());
+
+  const parts = [];
+  const linkRegex = /\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g;
+  let lastIndex = 0;
+  let m;
+  while ((m = linkRegex.exec(text)) !== null) {
+    parts.push({ type: 'text', value: text.slice(lastIndex, m.index) });
+    if (isSafeUrl(m[2])) {
+      parts.push({ type: 'link', text: m[1], url: m[2].trim() });
+    } else {
+      parts.push({ type: 'text', value: `[${m[1]}](${m[2]})` });
+    }
+    lastIndex = m.index + m[0].length;
+  }
+  parts.push({ type: 'text', value: text.slice(lastIndex) });
+
+  let out = parts
+    .map((p) => {
+      if (p.type === 'link') {
+        return `<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener noreferrer" class="chat-message-link">${escapeHtml(p.text)}</a>`;
+      }
+      return escapeHtml(p.value);
+    })
+    .join('');
+
+  out = out.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/\n/g, '<br>');
+
+  return out;
 }
 
 export default ChatMessage;

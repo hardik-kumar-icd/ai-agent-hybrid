@@ -317,6 +317,16 @@ export const widgetStyles = `
   font-weight: 600;
 }
 
+.chat-message-text .chat-message-link {
+  color: var(--widget-primary-color, #667eea);
+  text-decoration: underline;
+  word-break: break-all;
+}
+.chat-message-text .chat-message-link:hover {
+  text-decoration: none;
+  opacity: 0.9;
+}
+
 .typing-indicator {
   display: inline-flex;
   gap: 4px;

@@ -4,12 +4,59 @@ const { searchSimilar } = require('../utils/embeddingService');
 const { getOrderDetailsTool } = require('../tools/getOrderDetailsTool');
 const { getOrderStatusTool } = require('../tools/getOrderStatusTool');
 
+/** Stop words to ignore when re-ranking by keyword overlap */
+const STOP_WORDS = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'can', 'may', 'might', 'must', 'to', 'for', 'of', 'in', 'on', 'at', 'by', 'with', 'or', 'and', 'but', 'it', 'its', 'this', 'that', 'these', 'those', 'i', 'you', 'we', 'they', 'what', 'which', 'how', 'when', 'where', 'why', 'come', 'comes', 'from', 'about']);
+
 /**
- * RAG Tool for product knowledge
+ * Extract significant words from query for hybrid re-ranking (structure-agnostic).
+ */
+function getQueryTerms(query) {
+  const normalized = query.toLowerCase().replace(/[^\w\s-]/g, ' ').replace(/\s+/g, ' ');
+  return normalized.split(/\s+/).filter(t => t.length > 1 && !STOP_WORDS.has(t));
+}
+
+/**
+ * Normalize for overlap check so "v-standard" matches "v standard" in chunk text.
+ */
+function normalizeForOverlap(s) {
+  return (s || '').toLowerCase().replace(/[-.]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Re-rank docs: semantic score is primary, keyword overlap is a small boost.
+ * So "Which Rullegardin models use a cassette?" keeps cassette chunks on top,
+ * while "V-Standard plissegardin" still gets a nudge for partial name match.
+ */
+function reRankByKeywordOverlap(docs, query) {
+  const terms = getQueryTerms(query);
+  if (terms.length === 0) return docs;
+
+  const scored = docs.map(doc => {
+    const textNorm = normalizeForOverlap(doc.text || '');
+    const matchCount = terms.filter(term => {
+      const termNorm = normalizeForOverlap(term);
+      return textNorm.includes(termNorm) || textNorm.includes(term);
+    }).length;
+    const semanticScore = typeof doc.score === 'number' ? doc.score : 0;
+    const keywordBoost = 0.06 * matchCount;
+    const combinedScore = semanticScore + keywordBoost;
+    return { ...doc, _combinedScore: combinedScore };
+  });
+
+  scored.sort((a, b) => b._combinedScore - a._combinedScore);
+  return scored.map(({ _combinedScore, ...doc }) => doc);
+}
+
+/**
+ * RAG Tool for knowledge base (products, FAQs, docs – any ingested content)
  */
 async function ragTool({ query }) {
   try {
-    const similarDocs = await searchSimilar(query, 3);
+    const topKReturn = 10;
+    const topKFetch = 24;
+    let similarDocs = await searchSimilar(query, topKFetch);
+    similarDocs = reRankByKeywordOverlap(similarDocs, query);
+    similarDocs = similarDocs.slice(0, topKReturn);
     
     // Log what we found for debugging
     console.log(`[RAG Tool] Query: "${query}" | Found ${similarDocs.length} results`);
@@ -52,10 +99,11 @@ async function processVisorMessage(message) {
     const systemPrompt = `You are a helpful AI assistant providing product information and customer service.
 
 CRITICAL LANGUAGE RULE - READ THIS FIRST:
-- ALWAYS detect the user's language and respond in the SAME language.
-- If user writes "What is status of order #90948?" → This is ENGLISH → Respond in ENGLISH: "To check the status of your order, I also need the email address used for the order. Could you please provide it?"
-- If user writes "Hva er statusen på bestillingen?" → This is NORWEGIAN → Respond in NORWEGIAN.
-- DO NOT default to Norwegian. DO NOT assume Norwegian. Match the user's language exactly.
+- Respond ONLY in the language of the USER'S CURRENT (latest) message. Ignore the language of previous messages in the conversation and ignore the language of the retrieved knowledge base context. If the current user message is in English, your ENTIRE response MUST be in English. If the current user message is in Norwegian, respond in Norwegian.
+- The knowledge base may contain Norwegian product names and descriptions (e.g. "Rullegardin", "kassett", "mindre vinduer") – that does NOT change the response language. Always match the CURRENT user message language only.
+- If user writes "Which Rullegardin models use a cassette?" → ENGLISH → Respond in ENGLISH only (e.g. "Here are the Rullegardin models that use a cassette: ...").
+- If user writes "Hva er statusen på bestillingen?" → NORWEGIAN → Respond in NORWEGIAN.
+- DO NOT default to Norwegian. DO NOT assume Norwegian. DO NOT switch to Norwegian because the context or previous reply was in Norwegian.
 
 CORE KNOWLEDGE (RAG) - CRITICAL RULES:
 - You have access to a knowledge base containing product information. ALWAYS use the rag_search tool FIRST when users ask about products.
@@ -95,18 +143,16 @@ ORDER TRACKING & TOOL USAGE:
 
 OPERATIONAL RULES:
 - LANGUAGE: ABSOLUTELY CRITICAL - THIS IS MANDATORY AND NON-NEGOTIABLE
-  * STEP 1: Before writing ANY response, identify the language of the user's message.
-  * STEP 2: Respond in the EXACT SAME LANGUAGE as the user's message. No exceptions.
-  * ENGLISH DETECTION: If the user's message contains English words/phrases like "What", "is", "status", "order", "Hello", "email", "test@test.com" → The message is in ENGLISH. You MUST respond in ENGLISH.
-  * NORWEGIAN DETECTION: If the user's message contains Norwegian words/phrases like "Hei", "Hva", "er", "statusen", "bestilling" → The message is in NORWEGIAN. You MUST respond in NORWEGIAN.
-  * EXAMPLES - FOLLOW THESE EXACTLY:
-    - User: "What is status of order #90948?" → This is ENGLISH. Respond: "To check the status of your order, I also need the email address used for the order. Could you please provide it?"
-    - User: "Hello" → This is ENGLISH. Respond in ENGLISH.
-    - User: "test@test.com" → This is ENGLISH (email addresses are language-neutral, but if previous messages were English, continue in English). Respond in ENGLISH.
-    - User: "Hei" → This is NORWEGIAN. Respond in NORWEGIAN.
-    - User: "Hva er statusen på bestillingen?" → This is NORWEGIAN. Respond in NORWEGIAN.
-  * DO NOT default to Norwegian. DO NOT assume Norwegian. ONLY use Norwegian if the user's message is clearly in Norwegian.
-  * If you detect English, your ENTIRE response must be in English, including questions, greetings, and all text.
+  * Use ONLY the language of the USER'S CURRENT (latest) message. Do NOT copy the language of conversation history or of the retrieved context (e.g. Norwegian product text). If the current message is in English, respond entirely in English; if in Norwegian, respond entirely in Norwegian.
+  * STEP 1: Before writing ANY response, look at the CURRENT user message only and identify its language.
+  * STEP 2: Write your ENTIRE response in that language. No exceptions.
+  * ENGLISH DETECTION: If the CURRENT user message contains English words like "What", "Which", "Does", "is", "status", "order", "models", "cassette", "products", "category", "windows" → The message is in ENGLISH. You MUST respond in ENGLISH.
+  * NORWEGIAN DETECTION: If the CURRENT user message contains Norwegian words like "Hei", "Hva", "er", "statusen", "bestilling", "hvilke" → The message is in NORWEGIAN. You MUST respond in NORWEGIAN.
+  * EXAMPLES:
+    - Current user: "Which Rullegardin models use a cassette?" → ENGLISH. Respond in ENGLISH: "Here are the Rullegardin models that use a cassette: ..."
+    - Current user: "Hva er statusen på bestillingen?" → NORWEGIAN. Respond in NORWEGIAN.
+  * DO NOT default to Norwegian. DO NOT assume Norwegian. DO NOT switch to Norwegian because a previous answer or the knowledge base was in Norwegian.
+  * If the current user message is in English, your ENTIRE response must be in English (product names like "Rullegardin" may stay as-is; all your own sentences must be in English).
 - UNITS: Always use cm or mm as specified in the technical docs. If a user provides measurements in meters, convert them for clarity.
 - TONE: Professional, expert-led, and welcoming.
 - LINKS: When mentioning a specific product or installation guide, provide the direct URL from the knowledge base if available.
@@ -124,6 +170,17 @@ RESPONSE FORMATTING & CONCISENESS - CRITICAL:
 - Use bullet points for lists and step-by-step instructions.
 - Keep responses concise and relevant to the question asked.
 - Format product information clearly but concisely.
+
+LINKS & APPEARANCE:
+- When the retrieved context contains a URL for a product (e.g. additional_info.url, url, link), include it as a markdown link: [Product name or "More info"](exact_url_from_context). Use ONLY URLs that appear in the retrieved context; do NOT invent or guess URLs.
+- Format product lists in a consistent way: use a numbered list for multiple products, then for each product use bullet points for Category, Description, key attributes (Price, Max width, Features, etc.), and end with a link when available: [More info](url).
+- Example format when a product has a URL in context:
+  1. **Product Name**
+  - Category: X
+  - Description: ...
+  - Price: ... (or "Contact for price")
+  - [More info](https://visor.no/...)
+- Links will be rendered as clickable hyperlinks in the chat. Use the exact URL from the knowledge base.
 
 Be helpful, professional, and expert-led.`;
 
