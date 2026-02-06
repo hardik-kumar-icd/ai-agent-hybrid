@@ -61,10 +61,15 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     }
   }, [messages]);
 
-  // Auto-scroll to bottom when new message arrives
+  // Auto-scroll to bottom when new message arrives or when chat opens (so latest messages are visible)
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, isLoading]);
+    if (!isOpen) return;
+    // Small delay so the chat window is painted before scrolling
+    const t = requestAnimationFrame(() => {
+      scrollToBottom();
+    });
+    return () => cancelAnimationFrame(t);
+  }, [messages, isLoading, isOpen]);
 
   // Focus input when chat opens
   useEffect(() => {

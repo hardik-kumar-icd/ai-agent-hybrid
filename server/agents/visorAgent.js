@@ -1,5 +1,5 @@
 const { ChatOpenAI } = require('@langchain/openai');
-const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
+const { HumanMessage, AIMessage, SystemMessage } = require('@langchain/core/messages');
 const { searchSimilar } = require('../utils/embeddingService');
 const { getOrderDetailsTool } = require('../tools/getOrderDetailsTool');
 const { getOrderStatusTool } = require('../tools/getOrderStatusTool');
@@ -88,7 +88,11 @@ async function ragTool({ query }) {
  * Combines RAG, order details, and order status tools
  * Uses a simplified approach with function calling
  */
-async function processVisorMessage(message) {
+/**
+ * @param {string} message - Current user message
+ * @param {Array<{ role: 'user'|'assistant', content: string }>} [conversationHistory] - Previous turns for context (e.g. "this product")
+ */
+async function processVisorMessage(message, conversationHistory = []) {
   try {
     // Validate API key
     if (!process.env.OPENAI_API_KEY) {
@@ -110,6 +114,7 @@ CORE KNOWLEDGE (RAG) - CRITICAL RULES:
 - STRICT ADHERENCE: If the rag_search tool returns "NO_KNOWLEDGE_BASE_DATA" or "No relevant information found", you MUST respond with: "I don't have information about products in my knowledge base yet. Please contact customer service for assistance." DO NOT make up products. DO NOT use training data or general knowledge about products.
 - PRODUCT INFORMATION: When users ask about products, ALWAYS call rag_search tool FIRST. Only share product information that comes from the rag_search tool results. Product names, prices, SKUs, descriptions, and specifications from the knowledge base are public information and should be shared.
 - SEMANTIC UNDERSTANDING: Use your semantic understanding to match field names regardless of format. For example, if a user asks about "regular-price" but the document has "regular_price", understand they refer to the same field. Similarly, handle variations like "sale_price" vs "sale-price" vs "sale price", "product_name" vs "productName" vs "product name", etc. Extract and provide the information based on semantic meaning, not exact string matching.
+- ANY JSON STRUCTURE: Ingested content can be products, FAQs, docs, or anything—there is no fixed schema. The knowledge base may use any structure (nested objects, different key names, different languages). Delivery/lead time might appear as production_lead_time, delivery_time, leveringstid, shipping.days, etc. FAQ or fabric samples might be in faq[], questions, support_info, or any other path. Use your intelligence to find and use the relevant information by meaning (e.g. "delivery time" → any field about shipping/lead time; "fabric samples" → any text about samples/tekstilprøver/prøver), not by expecting fixed field names.
 - TRANSPARENCY: If rag_search returns no results or "NO_KNOWLEDGE_BASE_DATA", you MUST explicitly state that you don't have that information in your knowledge base. DO NOT invent products or use general knowledge.
 
 ORDER TRACKING & TOOL USAGE:
@@ -131,6 +136,7 @@ ORDER TRACKING & TOOL USAGE:
     - "email: user@example.com" → extract "user@example.com"
     - "my email is user@example.com" → extract "user@example.com"
   * CRITICAL CONTEXT MEMORY: If the user's message contains only an email (like "test@test.com") and you previously asked for an email because an order_id was mentioned, you MUST use that order_id from the previous context. Similarly, if the user provides only an order_id and you previously asked for it because an email was mentioned, use that email. The user is providing the missing piece - do NOT ask for what they already provided.
+  * FOLLOW-UP REFERENCES: Use the conversation history to resolve references like "this product", "it", "that one", "the one you mentioned". If the user asks e.g. "What is the delivery time for this product?" after you listed a product, treat "this product" as the product you just mentioned in your previous message. Do NOT ask "which product?" when the referent is clear from the last turn.
 - WORKFLOW: 
   * FIRST: Check the conversation history for any previously mentioned order_id or email. If found, use it along with any new information provided.
   * If order_id is found (from current message OR previous conversation) but email is missing: Ask ONLY for the email in the same language as the user's message
@@ -251,9 +257,15 @@ Be helpful, professional, and expert-led.`;
       }
     ]);
 
-    // Create messages
+    // Build messages: system + conversation history + current user message
+    const historyMessages = (conversationHistory || []).flatMap((turn) => {
+      if (turn.role === 'user') return [new HumanMessage(turn.content)];
+      if (turn.role === 'assistant') return [new AIMessage(turn.content)];
+      return [];
+    });
     const messages = [
       new SystemMessage(systemPrompt),
+      ...historyMessages,
       new HumanMessage(message)
     ];
 

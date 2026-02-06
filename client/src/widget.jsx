@@ -4,10 +4,7 @@
  */
 
 import ChatWidget from './components/ChatWidget';
-import { injectStyles } from './widget-styles';
-
-// Inject CSS styles programmatically
-injectStyles();
+// CSS is injected programmatically via Vite plugin (from component CSS files)
 
 /**
  * Check if React and ReactDOM are available

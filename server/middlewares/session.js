@@ -3,10 +3,13 @@
  * Stores temporary user context (order_id, email) by conversationId
  */
 
+/** Max conversation history messages to keep per session (user + assistant pairs) */
+const MAX_HISTORY_MESSAGES = 20;
+
 class SessionCache {
   constructor() {
     // In-memory Map to store sessions
-    // Key: conversationId, Value: { order_id, email, lastAccessed }
+    // Key: conversationId, Value: { order_id, email, lastAccessed, history: [{ role, content }] }
     this.sessions = new Map();
     
     // Cleanup interval: remove sessions older than 1 hour
@@ -22,7 +25,7 @@ class SessionCache {
    */
   get(conversationId) {
     if (!conversationId) return null;
-    
+
     const session = this.sessions.get(conversationId);
     if (session) {
       session.lastAccessed = Date.now();
@@ -32,6 +35,42 @@ class SessionCache {
       };
     }
     return null;
+  }
+
+  /**
+   * Get conversation history for context (e.g. for follow-up "this product").
+   * @param {string} conversationId
+   * @returns {Array<{ role: 'user'|'assistant', content: string }>}
+   */
+  getHistory(conversationId) {
+    if (!conversationId) return [];
+    const session = this.sessions.get(conversationId);
+    if (!session || !Array.isArray(session.history)) return [];
+    session.lastAccessed = Date.now();
+    return session.history;
+  }
+
+  /**
+   * Append one message to conversation history. Keeps last MAX_HISTORY_MESSAGES.
+   * @param {string} conversationId
+   * @param {string} role - 'user' or 'assistant'
+   * @param {string} content
+   */
+  appendToHistory(conversationId, role, content) {
+    if (!conversationId || !role || typeof content !== 'string') return;
+    const session = this.sessions.get(conversationId) || {
+      order_id: null,
+      email: null,
+      lastAccessed: Date.now(),
+      history: []
+    };
+    if (!Array.isArray(session.history)) session.history = [];
+    session.history.push({ role, content });
+    if (session.history.length > MAX_HISTORY_MESSAGES) {
+      session.history = session.history.slice(-MAX_HISTORY_MESSAGES);
+    }
+    session.lastAccessed = Date.now();
+    this.sessions.set(conversationId, session);
   }
 
   /**
@@ -46,6 +85,7 @@ class SessionCache {
     this.sessions.set(conversationId, {
       order_id: data.order_id || existing.order_id || null,
       email: data.email || existing.email || null,
+      history: existing.history || [],
       lastAccessed: Date.now()
     });
   }
@@ -135,7 +175,9 @@ function sessionMiddleware(req, res, next) {
     get: () => sessionCache.get(conversationId),
     set: (data) => sessionCache.set(conversationId, data),
     update: (updates) => sessionCache.update(conversationId, updates),
-    clear: () => sessionCache.clear(conversationId)
+    clear: () => sessionCache.clear(conversationId),
+    getHistory: () => sessionCache.getHistory(conversationId),
+    appendToHistory: (role, content) => sessionCache.appendToHistory(conversationId, role, content)
   };
 
   // Attach conversationId to request for easy access

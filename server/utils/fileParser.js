@@ -42,8 +42,7 @@ const NAME_LIKE_KEYS = new Set(['name', 'title', 'product_name', 'productname', 
 
 /**
  * Flatten an object into "key: value" parts for a searchable summary line.
- * Structure-agnostic: works for products, FAQs, docs, or any JSON shape.
- * Uses top-level keys and one level of nesting (e.g. attributes.type).
+ * Fully recursive: works for any JSON depth and structure (products, FAQs, nested configs, etc.).
  * For name/title-like fields, also adds a normalized form so partial names match (e.g. "V-Standard plissegardin").
  */
 function flattenToSummaryParts(obj, prefix = '') {
@@ -64,10 +63,7 @@ function flattenToSummaryParts(obj, prefix = '') {
         else if (typeof first === 'object') parts.push(`${label}: ${value.map(v => typeof v === 'object' && v !== null ? flattenToSummaryParts(v, label).join('; ') : String(v)).join('; ')}`);
       }
     } else if (typeof value === 'object') {
-      for (const [k, v] of Object.entries(value)) {
-        if (v !== undefined && v !== null && scalar(v)) parts.push(`${label}.${k}: ${v}`);
-        else if (Array.isArray(v) && v.every(scalar)) parts.push(`${label}.${k}: ${v.join(', ')}`);
-      }
+      parts.push(...flattenToSummaryParts(value, label));
     } else {
       parts.push(`${label}: ${value}`);
       if (typeof value === 'string' && NAME_LIKE_KEYS.has(keyLower)) {
@@ -116,7 +112,6 @@ function parseJSON(filePath) {
       }
       
       if (typeof item === 'object' && item !== null) {
-        // Build one searchable summary line from whatever keys exist (no schema-specific logic)
         const summaryParts = flattenToSummaryParts(item);
         const fields = [];
         if (summaryParts.length > 0) {

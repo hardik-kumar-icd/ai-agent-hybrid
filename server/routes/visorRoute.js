@@ -114,8 +114,17 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
       enhancedMessage = `${message}\n\n[Context: ${context.join(', ')}]`;
     }
 
-    // Process message through Visor agent
-    const reply = await processVisorMessage(enhancedMessage);
+    // Get conversation history for follow-up context (e.g. "this product")
+    const history = req.session.getHistory ? req.session.getHistory() : [];
+
+    // Process message through Visor agent with history
+    const reply = await processVisorMessage(enhancedMessage, history);
+
+    // Append this turn to session history so next message has context
+    if (req.session.appendToHistory) {
+      req.session.appendToHistory('user', enhancedMessage);
+      req.session.appendToHistory('assistant', reply);
+    }
 
     // Return response
     res.json({
