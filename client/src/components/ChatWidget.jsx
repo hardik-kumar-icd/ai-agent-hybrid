@@ -8,6 +8,11 @@ import './ChatWidget.css';
  * Main chat widget that can be embedded on WordPress/Magento sites
  * Supports both 'user' and 'admin' modes
  */
+const WELCOME_MESSAGE = 'Hei! Jeg er Visor.no assistenten. Hvordan kan jeg hjelpe deg?';
+const ENGLISH_PLACEHOLDER = 'Type your message here...';
+const NORWEGIAN_PLACEHOLDER = 'Skriv din melding her...';
+const ENGLISH_DETECT_REGEX = /\b(what|how|order|status|the|is|can|do|does|please|help|want|need|hello|hi|when|where|which|why|tell|me|about)\b/i;
+
 function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToken }) {
   const isAdmin = mode === 'admin';
   const [isOpen, setIsOpen] = useState(false);
@@ -16,6 +21,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [conversationId, setConversationId] = useState(null);
+  const [conversationLanguage, setConversationLanguage] = useState('nb');
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -86,7 +92,9 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     const message = inputValue.trim();
     if (!message || isLoading) return;
 
-    // Add user message to UI immediately
+    // Detect English from first user message for placeholder language
+    setConversationLanguage(prev => (prev === 'nb' && ENGLISH_DETECT_REGEX.test(message) ? 'en' : prev));
+
     const userMessage = { role: 'user', content: message };
     setMessages(prev => [...prev, userMessage]);
     setInputValue('');
@@ -142,6 +150,34 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     setIsOpen(!isOpen);
   };
 
+  const handleRestartChat = () => {
+    setMessages([]);
+    setError(null);
+    setConversationLanguage('nb');
+    const newId = 'conv-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    setConversationId(newId);
+    localStorage.setItem('visor_conversation_id', newId);
+    sessionStorage.removeItem('visor_chat_messages');
+  };
+
+  const handleDownloadTranscript = () => {
+    const displayMessages = messages.length === 0
+      ? [{ role: 'assistant', content: WELCOME_MESSAGE }]
+      : messages;
+    const lines = displayMessages.map(m => {
+      const who = m.role === 'user' ? 'You' : 'Assistant';
+      return `${who}: ${(m.content || '').replace(/\n/g, ' ')}`;
+    });
+    const text = lines.join('\n\n');
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `visor-chat-transcript-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="visor-chat-widget">
       {/* Chat Window / Admin Panel */}
@@ -180,18 +216,30 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                     <p>How can I help you today?</p>
                   </div>
                 </div>
-                <button className="chat-close-button" onClick={handleToggle} aria-label="Close chat">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/>
-                  </svg>
-                </button>
+                <div className="chat-header-right-group">
+                  <div className="chat-header-actions">
+                    <button type="button" className="chat-header-icon-btn" onClick={handleDownloadTranscript} title="Download transcript" aria-label="Download transcript">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/>
+                      </svg>
+                    </button>
+                    <button type="button" className="chat-header-icon-btn" onClick={handleRestartChat} title="Restart chat" aria-label="Restart chat">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor"/>
+                      </svg>
+                    </button>
+                  </div>
+                  <button className="chat-close-button" onClick={handleToggle} aria-label="Close chat">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
 
               <div className="chat-messages">
                 {messages.length === 0 && (
-                  <div className="chat-welcome-message">
-                    <p>Hei! Jeg er Visor.no assistenten. Hvordan kan jeg hjelpe deg?</p>
-                  </div>
+                  <ChatMessage message={WELCOME_MESSAGE} role="assistant" />
                 )}
                 {messages.map((msg, idx) => (
                   <ChatMessage key={idx} message={msg.content} role={msg.role} />
@@ -210,7 +258,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                   ref={inputRef}
                   type="text"
                   className="chat-input"
-                  placeholder="Skriv din melding her..."
+                  placeholder={conversationLanguage === 'en' ? ENGLISH_PLACEHOLDER : NORWEGIAN_PLACEHOLDER}
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyPress={handleKeyPress}
