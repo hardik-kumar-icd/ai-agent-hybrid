@@ -71,18 +71,37 @@ async function getOrderStatusTool({ order_id, email }) {
         }
       }
     } else if (platform === 'magento') {
-      // Magento 2 API call
-      const apiUrl = `${endpoints.magento}/orders/${order_id}`;
+      // Magento 2: customers see increment_id (Order Number), not entity_id. Look up by increment_id first, then fallback to entity_id.
+      const headers = {
+        'Authorization': `Bearer ${auth.magento.bearerToken}`,
+        'Content-Type': 'application/json'
+      };
 
       try {
-        const response = await axios.get(apiUrl, {
-          headers: {
-            'Authorization': `Bearer ${auth.magento.bearerToken}`,
-            'Content-Type': 'application/json'
-          }
-        });
+        let order = null;
 
-        const order = response.data;
+        // 1) Try search by increment_id (customer-facing order number)
+        const searchUrl = `${endpoints.magento}/orders?searchCriteria[filter_groups][0][filters][0][field]=increment_id&searchCriteria[filter_groups][0][filters][0][value]=${encodeURIComponent(String(order_id).trim())}&searchCriteria[filter_groups][0][filters][0][condition_type]=eq`;
+        const searchResponse = await axios.get(searchUrl, { headers });
+        const items = searchResponse.data?.items || [];
+        if (items.length > 0) {
+          order = items[0];
+        }
+
+        // 2) Fallback: if no result and order_id looks like numeric entity_id, try direct GET by entity_id
+        if (!order && /^\d+$/.test(String(order_id).trim())) {
+          const directUrl = `${endpoints.magento}/orders/${order_id}`;
+          try {
+            const directResponse = await axios.get(directUrl, { headers });
+            if (directResponse.data) order = directResponse.data;
+          } catch (_) {
+            // Ignore 404 from direct GET; we'll throw below
+          }
+        }
+
+        if (!order) {
+          throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
+        }
 
         // Verify email matches
         if (order.customer_email?.toLowerCase() !== email.toLowerCase()) {
@@ -115,6 +134,8 @@ async function getOrderStatusTool({ order_id, email }) {
           throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
         } else if (error.message.includes('Email does not match')) {
           throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
+        } else if (error.message.includes('Beklager')) {
+          throw error;
         } else {
           throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
         }
