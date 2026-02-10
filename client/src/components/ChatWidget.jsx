@@ -94,7 +94,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     setError(null);
 
     try {
-      const apiBaseUrl = baseUrl || 'https://ai-agent-hybrid.onrender.com';
+      const apiBaseUrl = baseUrl || 'https://sinkerless-sententially-abrielle.ngrok-free.dev';
       const response = await fetch(`${apiBaseUrl}/visor-chat`, {
         method: 'POST',
         headers: {
