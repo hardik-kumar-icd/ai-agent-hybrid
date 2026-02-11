@@ -12,6 +12,7 @@ const WELCOME_MESSAGE = 'Hei! Jeg er Visor.no assistenten. Hvordan kan jeg hjelp
 const ENGLISH_PLACEHOLDER = 'Type your message here...';
 const NORWEGIAN_PLACEHOLDER = 'Skriv din melding her...';
 const ENGLISH_DETECT_REGEX = /\b(what|how|order|status|the|is|can|do|does|please|help|want|need|hello|hi|when|where|which|why|tell|me|about)\b/i;
+const ORDER_DETECT_REGEX = /\b(order|ordre|ordrestatus|order status|where is my order|hvor er min ordre|track order|spor ordre|order number|ordrenummer|order id|orderid)\b/i;
 
 function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToken }) {
   const isAdmin = mode === 'admin';
@@ -22,8 +23,13 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
   const [error, setError] = useState(null);
   const [conversationId, setConversationId] = useState(null);
   const [conversationLanguage, setConversationLanguage] = useState('nb');
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [orderEmail, setOrderEmail] = useState('');
+  const [orderId, setOrderId] = useState('');
+  const [showOptionsAgain, setShowOptionsAgain] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const lastMessageRef = useRef(null);
 
   // Set CSS variables for theming
   useEffect(() => {
@@ -67,15 +73,29 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     }
   }, [messages]);
 
-  // Auto-scroll to bottom when new message arrives or when chat opens (so latest messages are visible)
+  // Auto-scroll to show latest message when new message arrives
   useEffect(() => {
     if (!isOpen) return;
-    // Small delay so the chat window is painted before scrolling
-    const t = requestAnimationFrame(() => {
-      scrollToBottom();
-    });
-    return () => cancelAnimationFrame(t);
-  }, [messages, isLoading, isOpen]);
+    const t = setTimeout(() => {
+      // If options are about to show, scroll to last message instead of bottom
+      if (showOptionsAgain) {
+        if (lastMessageRef.current) {
+          lastMessageRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+      } else {
+        scrollToBottom();
+      }
+    }, 150);
+    return () => clearTimeout(t);
+  }, [messages, isLoading, isOpen, showOptionsAgain]);
+
+  // Delay showing options after order response to let user read the message first
+  useEffect(() => {
+    if (showOptionsAgain) {
+      // Don't auto-scroll when options appear - let user see the response
+      // User can scroll down if they want to see options
+    }
+  }, [showOptionsAgain]);
 
   // Focus input when chat opens
   useEffect(() => {
@@ -94,6 +114,16 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
 
     // Detect English from first user message for placeholder language
     setConversationLanguage(prev => (prev === 'nb' && ENGLISH_DETECT_REGEX.test(message) ? 'en' : prev));
+
+    // If user is asking about order status, show the form only – don't call API (no typing indicator, form usable immediately)
+    if (ORDER_DETECT_REGEX.test(message)) {
+      setSelectedOption('order');
+      setShowOptionsAgain(false);
+      const userMessage = { role: 'user', content: message };
+      setMessages(prev => [...prev, userMessage]);
+      setInputValue('');
+      return;
+    }
 
     const userMessage = { role: 'user', content: message };
     setMessages(prev => [...prev, userMessage]);
@@ -154,10 +184,104 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     setMessages([]);
     setError(null);
     setConversationLanguage('nb');
+    setSelectedOption(null);
+    setOrderEmail('');
+    setOrderId('');
+    setShowOptionsAgain(false);
     const newId = 'conv-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     setConversationId(newId);
     localStorage.setItem('visor_conversation_id', newId);
     sessionStorage.removeItem('visor_chat_messages');
+  };
+
+  const handleOptionSelect = (option) => {
+    setSelectedOption(option);
+    if (option === 'order') {
+      // For order status, we'll show the form inputs
+      setMessages(prev => [...prev, { role: 'user', content: 'Order Status' }]);
+    } else if (option === 'faqs') {
+      setMessages(prev => [...prev, { role: 'user', content: 'FAQs' }]);
+      const promptMessage = conversationLanguage === 'en' 
+        ? 'Enter your query'
+        : 'Skriv inn spørsmålet ditt';
+      setMessages(prev => [...prev, { role: 'assistant', content: promptMessage }]);
+    } else if (option === 'product') {
+      setMessages(prev => [...prev, { role: 'user', content: 'Product Info' }]);
+      const promptMessage = conversationLanguage === 'en'
+        ? 'Enter your product related query'
+        : 'Skriv inn produktrelatert spørsmål';
+      setMessages(prev => [...prev, { role: 'assistant', content: promptMessage }]);
+    }
+  };
+
+  const handleOrderSubmit = async () => {
+    if (!orderEmail.trim() || !orderId.trim()) {
+      setError(conversationLanguage === 'en' 
+        ? 'Please fill in both email and order ID' 
+        : 'Vennligst fyll inn både e-post og ordrenummer');
+      return;
+    }
+
+    const emailValue = orderEmail.trim();
+    const orderIdValue = orderId.trim();
+    const orderMessage = conversationLanguage === 'en'
+      ? `Check order status for Order ID: ${orderIdValue}, Email: ${emailValue}`
+      : `Sjekk ordrestatus for ordrenummer: ${orderIdValue}, E-post: ${emailValue}`;
+    
+    setMessages(prev => [...prev, { role: 'user', content: orderMessage }]);
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const apiBaseUrl = baseUrl || 'https://sinkerless-sententially-abrielle.ngrok-free.dev';
+      const response = await fetch(`${apiBaseUrl}/visor-chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Conversation-Id': conversationId
+        },
+        body: JSON.stringify({
+          message: orderMessage,
+          conversationId: conversationId,
+          email: emailValue,
+          order_id: orderIdValue
+        })
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Session expired. Please refresh the page.');
+        } else if (response.status === 429) {
+          throw new Error('Too many requests. Please wait a moment and try again.');
+        } else {
+          throw new Error(`Server error: ${response.status}`);
+        }
+      }
+
+      const data = await response.json();
+      const assistantMessage = { role: 'assistant', content: data.reply || 'No response received.' };
+      setMessages(prev => [...prev, assistantMessage]);
+      setOrderEmail('');
+      setOrderId('');
+      setSelectedOption(null); // Clear order form after submission
+      
+      // Delay showing options to let user read the response first
+      setTimeout(() => {
+        setShowOptionsAgain(true);
+        // Scroll to show the response message, not all the way to bottom
+        setTimeout(() => {
+          if (lastMessageRef.current) {
+            lastMessageRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+          }
+        }, 100);
+      }, 2000); // Show options after 2 seconds
+
+    } catch (error) {
+      console.error('Chat error:', error);
+      setError(error.message || 'Failed to send message. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleDownloadTranscript = () => {
@@ -213,7 +337,6 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                   </div>
                   <div className="chat-header-text">
                     <h3>Visor.no Assistant</h3>
-                    <p>How can I help you today?</p>
                   </div>
                 </div>
                 <div className="chat-header-right-group">
@@ -239,11 +362,116 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
 
               <div className="chat-messages">
                 {messages.length === 0 && (
-                  <ChatMessage message={WELCOME_MESSAGE} role="assistant" />
+                  <>
+                    <ChatMessage message={WELCOME_MESSAGE} role="assistant" />
+                    {!selectedOption && !showOptionsAgain && (
+                      <div className="chat-options-container">
+                        <p className="chat-options-prompt">
+                          {conversationLanguage === 'en' 
+                            ? 'Please select an option:' 
+                            : 'Vennligst velg et alternativ:'}
+                        </p>
+                        <div className="chat-options-buttons">
+                          <button 
+                            className="chat-option-btn" 
+                            onClick={() => handleOptionSelect('faqs')}
+                          >
+                            FAQs
+                          </button>
+                          <button 
+                            className="chat-option-btn" 
+                            onClick={() => handleOptionSelect('product')}
+                          >
+                            {conversationLanguage === 'en' ? 'Product Info' : 'Produktinfo'}
+                          </button>
+                          <button 
+                            className="chat-option-btn" 
+                            onClick={() => handleOptionSelect('order')}
+                          >
+                            {conversationLanguage === 'en' ? 'Order Status' : 'Ordrestatus'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
-                {messages.map((msg, idx) => (
-                  <ChatMessage key={idx} message={msg.content} role={msg.role} />
-                ))}
+                {messages.map((msg, idx) => {
+                  const isLastAssistantMessage = idx === messages.length - 1 && msg.role === 'assistant';
+                  return (
+                    <div key={idx} ref={isLastAssistantMessage ? lastMessageRef : null}>
+                      <ChatMessage message={msg.content} role={msg.role} />
+                    </div>
+                  );
+                })}
+                {showOptionsAgain && !selectedOption && (
+                  <div className="chat-options-container compact">
+                    <p className="chat-options-prompt">
+                      {conversationLanguage === 'en' 
+                        ? 'Please select an option:' 
+                        : 'Vennligst velg et alternativ:'}
+                    </p>
+                    <div className="chat-options-buttons">
+                      <button 
+                        className="chat-option-btn" 
+                        onClick={() => handleOptionSelect('faqs')}
+                      >
+                        FAQs
+                      </button>
+                      <button 
+                        className="chat-option-btn" 
+                        onClick={() => handleOptionSelect('product')}
+                      >
+                        {conversationLanguage === 'en' ? 'Product Info' : 'Produktinfo'}
+                      </button>
+                      <button 
+                        className="chat-option-btn" 
+                        onClick={() => handleOptionSelect('order')}
+                      >
+                        {conversationLanguage === 'en' ? 'Order Status' : 'Ordrestatus'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {selectedOption === 'order' && messages.length > 0 && (
+                  <div className="chat-order-form">
+                    <div className="chat-order-form-field">
+                      <label>
+                        {conversationLanguage === 'en' ? 'Email:' : 'E-post:'}
+                      </label>
+                      <input
+                        type="email"
+                        value={orderEmail}
+                        onChange={(e) => setOrderEmail(e.target.value)}
+                        placeholder={conversationLanguage === 'en' ? 'your@email.com' : 'din@epost.no'}
+                        disabled={isLoading}
+                      />
+                    </div>
+                    <div className="chat-order-form-field">
+                      <label>
+                        {conversationLanguage === 'en' ? 'Order ID:' : 'Ordrenummer:'}
+                      </label>
+                      <input
+                        type="text"
+                        value={orderId}
+                        onChange={(e) => setOrderId(e.target.value)}
+                        placeholder={conversationLanguage === 'en' ? 'Enter order number' : 'Skriv inn ordrenummer'}
+                        disabled={isLoading}
+                        onKeyPress={(e) => {
+                          if (e.key === 'Enter' && orderEmail.trim() && orderId.trim()) {
+                            handleOrderSubmit();
+                          }
+                        }}
+                      />
+                    </div>
+                    <button
+                      className="chat-order-submit-btn"
+                      onClick={handleOrderSubmit}
+                      disabled={!orderEmail.trim() || !orderId.trim() || isLoading}
+                    >
+                      {conversationLanguage === 'en' ? 'Check Status' : 'Sjekk status'}
+                    </button>
+                  </div>
+                )}
                 {isLoading && <ChatMessage message="" role="assistant" isLoading={true} />}
                 {error && (
                   <div className="chat-error-message">
