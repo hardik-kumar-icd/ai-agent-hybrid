@@ -54,10 +54,14 @@
   padding: 12px 16px;
   border-radius: 18px;
   word-wrap: break-word;
+  word-break: break-word;
+  overflow-wrap: break-word;
   line-height: 1.5;
   font-size: 14px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   text-align: left;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .chat-message-user .chat-message-text {
@@ -80,6 +84,9 @@
   color: var(--widget-primary-color, #667eea);
   text-decoration: underline;
   word-break: break-all;
+  overflow-wrap: break-word;
+  display: inline-block;
+  max-width: 100%;
 }
 .chat-message-text .chat-message-link:hover {
   text-decoration: none;

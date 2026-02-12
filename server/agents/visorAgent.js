@@ -48,13 +48,41 @@ function reRankByKeywordOverlap(docs, query) {
 }
 
 /**
+ * Use the LLM to expand the user query into alternative phrasings for retrieval.
+ * This lets the model infer intent (e.g. "pakken min" → same as "ordre henting") instead of static keyword lists.
+ * @param {string} query - Original user question
+ * @returns {Promise<string>} - Original query plus a short expansion for search (or original on failure)
+ */
+async function expandQueryForSearch(query) {
+  if (!query || typeof query !== 'string' || !process.env.OPENAI_API_KEY) return query;
+  try {
+    const expander = new ChatOpenAI({
+      openAIApiKey: process.env.OPENAI_API_KEY,
+      modelName: 'gpt-4o-mini',
+      temperature: 0,
+      maxTokens: 80,
+    });
+    const prompt = `You help improve search. Given a customer question, output 1-2 short alternative phrasings or key concepts that might appear in an FAQ or help article answering it. Same language as the question. No explanation, only the alternative phrasings or terms on one line.
+Question: ${query}`;
+    const response = await expander.invoke([new HumanMessage(prompt)]);
+    const text = (response.content && typeof response.content === 'string' ? response.content : '').trim();
+    if (text) return `${query} ${text}`;
+  } catch (err) {
+    console.warn('[RAG] Query expansion failed, using original query:', err.message);
+  }
+  return query;
+}
+
+/**
  * RAG Tool for knowledge base (products, FAQs, docs – any ingested content)
+ * Uses LLM-based query expansion so retrieval understands intent without static keyword lists.
  */
 async function ragTool({ query }) {
   try {
     const topKReturn = 10;
     const topKFetch = 24;
-    let similarDocs = await searchSimilar(query, topKFetch);
+    const searchQuery = await expandQueryForSearch(query);
+    let similarDocs = await searchSimilar(searchQuery, topKFetch);
     similarDocs = reRankByKeywordOverlap(similarDocs, query);
     similarDocs = similarDocs.slice(0, topKReturn);
     
@@ -110,9 +138,10 @@ CRITICAL LANGUAGE RULE - READ THIS FIRST:
 - DO NOT default to Norwegian. DO NOT assume Norwegian. DO NOT switch to Norwegian because the context or previous reply was in Norwegian.
 
 CORE KNOWLEDGE (RAG) - CRITICAL RULES:
-- You have access to a knowledge base containing product information. ALWAYS use the rag_search tool FIRST when users ask about products.
-- STRICT ADHERENCE: If the rag_search tool returns "NO_KNOWLEDGE_BASE_DATA" or "No relevant information found", you MUST respond with: "I don't have information about products in my knowledge base yet. Please contact customer service for assistance." DO NOT make up products. DO NOT use training data or general knowledge about products.
-- PRODUCT INFORMATION: When users ask about products, ALWAYS call rag_search tool FIRST. Only share product information that comes from the rag_search tool results. Product names, prices, SKUs, descriptions, and specifications from the knowledge base are public information and should be shared.
+- You have access to a knowledge base containing product information, FAQs, installation guides, and customer service information. ALWAYS use the rag_search tool FIRST when users ask about products, FAQs, payment methods, delivery, installation, measurements, or any general questions about Visor.no services.
+- STRICT ADHERENCE: If the rag_search tool returns "NO_KNOWLEDGE_BASE_DATA" or "No relevant information found", you MUST respond with: "I don't have that information in my knowledge base yet. Please contact customer service for assistance." DO NOT make up information. DO NOT use training data or general knowledge. ONLY use information from the rag_search tool results.
+- FAQ RESPONSES - ABSOLUTE PRIORITY: When rag_search returns FAQ content (text containing "Question:" and "Answer:" or "Category:"), you MUST use that exact FAQ content as the basis for your response. DO NOT replace FAQ answers with generic advice. If the FAQ mentions specific measurements (like "5mm fratrekk", "systembredde", "15-25mm"), specific products (like "rullegardin", "lamellegardin"), or specific resources (like "Hvordan ta mål videoer"), you MUST include those exact details. Paraphrase only for clarity, but preserve all specific technical details, measurements, and instructions.
+- PRODUCT INFORMATION & FAQs: When users ask about products, FAQs, payment methods (like Vipps), delivery, installation, measurements, or any service-related questions, ALWAYS call rag_search tool FIRST. Only share information that comes from the rag_search tool results. Product names, prices, SKUs, descriptions, FAQ answers, and specifications from the knowledge base are public information and should be shared.
 - SEMANTIC UNDERSTANDING: Use your semantic understanding to match field names regardless of format. For example, if a user asks about "regular-price" but the document has "regular_price", understand they refer to the same field. Similarly, handle variations like "sale_price" vs "sale-price" vs "sale price", "product_name" vs "productName" vs "product name", etc. Extract and provide the information based on semantic meaning, not exact string matching.
 - ANY JSON STRUCTURE: Ingested content can be products, FAQs, docs, or anything—there is no fixed schema. The knowledge base may use any structure (nested objects, different key names, different languages). Delivery/lead time might appear as production_lead_time, delivery_time, leveringstid, shipping.days, etc. FAQ or fabric samples might be in faq[], questions, support_info, or any other path. Use your intelligence to find and use the relevant information by meaning (e.g. "delivery time" → any field about shipping/lead time; "fabric samples" → any text about samples/tekstilprøver/prøver), not by expecting fixed field names.
 - TRANSPARENCY: If rag_search returns no results or "NO_KNOWLEDGE_BASE_DATA", you MUST explicitly state that you don't have that information in your knowledge base. DO NOT invent products or use general knowledge.
@@ -178,7 +207,8 @@ RESPONSE FORMATTING & CONCISENESS - CRITICAL:
 - Format product information clearly but concisely.
 
 LINKS & APPEARANCE:
-- When the retrieved context contains a URL for a product (e.g. additional_info.url, url, link), include it as a markdown link: [Product name or "More info"](exact_url_from_context). Use ONLY URLs that appear in the retrieved context; do NOT invent or guess URLs.
+- When the retrieved context contains a URL for a product or FAQ (e.g. additional_info.url, url, link, image_url), include it as a markdown link: [Product name or "More info"](exact_url_from_context). Use ONLY URLs that appear in the retrieved context; do NOT invent or guess URLs.
+- For FAQs with images: If the FAQ context contains an "Image URL" field, include it as a clickable link. For example, if the FAQ mentions a QR code and has an image_url, include: "You can find the QR code here: [QR Code Image](image_url_from_context)".
 - Format product lists in a consistent way: use a numbered list for multiple products, then for each product use bullet points for Category, Description, key attributes (Price, Max width, Features, etc.), and end with a link when available: [More info](url).
 - Example format when a product has a URL in context:
   1. **Product Name**
@@ -200,13 +230,13 @@ Be helpful, professional, and expert-led.`;
         type: 'function',
         function: {
           name: 'rag_search',
-          description: 'Search the knowledge base containing product information, specifications, and documentation. STRICT ADHERENCE: Always use this tool FIRST when users ask about products (e.g., "What products do you have?", "What is the price of X?"). If this tool returns "NO_KNOWLEDGE_BASE_DATA", do NOT make up products - state that information is not available.',
+          description: 'Search the knowledge base containing product information, FAQs, installation guides, payment methods, delivery information, and customer service documentation. STRICT ADHERENCE: Always use this tool FIRST when users ask about products, FAQs, payment methods (like Vipps), delivery, installation, measurements, or any general questions about Visor.no services (e.g., "What products do you have?", "How do I pay with Vipps?", "What is the delivery time?", "How do I take measurements?"). If this tool returns "NO_KNOWLEDGE_BASE_DATA", do NOT make up information - state that information is not available.',
           parameters: {
             type: 'object',
             properties: {
               query: {
                 type: 'string',
-                description: 'The search query about products, specifications, measurements, installation, or technical information'
+                description: 'The search query about products, FAQs, payment methods, delivery, installation, measurements, specifications, or any customer service related information'
               }
             },
             required: ['query']

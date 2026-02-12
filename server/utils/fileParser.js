@@ -76,6 +76,85 @@ function flattenToSummaryParts(obj, prefix = '') {
 }
 
 /**
+ * Check if JSON structure matches FAQ format (has categories with question/answer items)
+ * @param {object} data - Parsed JSON data
+ * @returns {boolean} - True if it looks like FAQ structure
+ */
+function isFAQStructure(data) {
+  if (!data || typeof data !== 'object') return false;
+  
+  // Check if it has a 'categories' property with category objects containing arrays
+  if (data.categories && typeof data.categories === 'object') {
+    const categoryKeys = Object.keys(data.categories);
+    if (categoryKeys.length > 0) {
+      // Check if first category has an array of objects with 'question' and 'answer'
+      const firstCategory = data.categories[categoryKeys[0]];
+      if (Array.isArray(firstCategory) && firstCategory.length > 0) {
+        const firstItem = firstCategory[0];
+        if (firstItem && typeof firstItem === 'object' && 
+            ('question' in firstItem || 'Question' in firstItem) &&
+            ('answer' in firstItem || 'Answer' in firstItem)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Parse FAQ JSON structure and convert to searchable text format
+ * Formats each FAQ as: "Category: [category]. Question: [question]. Answer: [answer]"
+ * @param {object} data - Parsed JSON data with FAQ structure
+ * @returns {string} - Formatted text representation
+ */
+function parseFAQJSON(data) {
+  const textItems = [];
+  
+  if (!data.categories || typeof data.categories !== 'object') {
+    return '';
+  }
+  
+  // Process each category
+  Object.entries(data.categories).forEach(([categoryName, faqs]) => {
+    if (!Array.isArray(faqs)) return;
+    
+    faqs.forEach((faq) => {
+      if (!faq || typeof faq !== 'object') return;
+      
+      const question = faq.question || faq.Question || '';
+      const answer = faq.answer || faq.Answer || '';
+      const imageUrl = faq.image_url || faq.imageUrl || '';
+      const imageAlt = faq.image_alt || faq.imageAlt || '';
+      
+      if (!question && !answer) return;
+      
+      // Format FAQ for optimal searchability
+      // Include category context, question, and full answer
+      let faqText = `Category: ${categoryName}. Question: ${question}. Answer: ${answer}`;
+      if (imageUrl) {
+        faqText += `. Image URL: ${imageUrl}`;
+        if (imageAlt) {
+          faqText += ` (${imageAlt})`;
+        }
+      }
+      textItems.push(faqText);
+      
+      // Also add a version with just question and answer for direct matching
+      if (question && answer) {
+        let simpleText = `Question: ${question}. Answer: ${answer}`;
+        if (imageUrl) {
+          simpleText += `. Image URL: ${imageUrl}`;
+        }
+        textItems.push(simpleText);
+      }
+    });
+  });
+  
+  return textItems.join('\n\n');
+}
+
+/**
  * Parse JSON file and convert to searchable text format
  * @param {string} filePath - Path to the JSON file
  * @returns {string} - Formatted text representation of JSON data
@@ -85,7 +164,12 @@ function parseJSON(filePath) {
     const content = fs.readFileSync(filePath, 'utf-8');
     const data = JSON.parse(content);
     
-    // Handle different JSON structures
+    // Check if it's FAQ structure and use specialized parser
+    if (isFAQStructure(data)) {
+      return parseFAQJSON(data);
+    }
+    
+    // Handle different JSON structures (original logic for other JSON types)
     let items = [];
     
     // If it's an array, use it directly
@@ -320,7 +404,9 @@ async function extractText(filePath) {
     } else if (fileType === 'json') {
       // Parse JSON file
       const jsonText = parseJSON(filePath);
-      return cleanText(jsonText);
+      // Don't apply cleanText to JSON parsing as it may remove important characters like slashes in URLs
+      // Just normalize whitespace
+      return jsonText.replace(/\s+/g, ' ').trim();
     } else {
       // Read text file
       const text = fs.readFileSync(filePath, 'utf-8');
@@ -344,8 +430,17 @@ function cleanText(text) {
   // Remove excessive whitespace
   let cleaned = text.replace(/\s+/g, ' ');
   
-  // Remove special characters but keep basic punctuation
-  cleaned = cleaned.replace(/[^\w\s.,!?;:()\-'"]/g, '');
+  // Preserve URLs - don't clean text that contains URLs
+  // Check if text contains URL patterns (http://, https://)
+  const urlPattern = /https?:\/\/[^\s]+/gi;
+  const hasUrls = urlPattern.test(cleaned);
+  
+  if (!hasUrls) {
+    // Remove special characters but keep basic punctuation (including slashes for paths)
+    // Keep slashes, colons, and other URL-safe characters
+    cleaned = cleaned.replace(/[^\w\s.,!?;:()\-'"/]/g, '');
+  }
+  // If URLs are present, preserve them as-is (don't strip slashes or colons)
   
   // Trim whitespace
   cleaned = cleaned.trim();
