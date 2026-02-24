@@ -1,6 +1,7 @@
 const { ChatOpenAI } = require('@langchain/openai');
 const { HumanMessage, AIMessage, SystemMessage } = require('@langchain/core/messages');
 const { searchSimilar } = require('../utils/embeddingService');
+const { searchTickets } = require('../utils/ticketSearch');
 const { getOrderDetailsTool } = require('../tools/getOrderDetailsTool');
 const { getOrderStatusTool } = require('../tools/getOrderStatusTool');
 
@@ -45,6 +46,72 @@ function reRankByKeywordOverlap(docs, query) {
 
   scored.sort((a, b) => b._combinedScore - a._combinedScore);
   return scored.map(({ _combinedScore, ...doc }) => doc);
+}
+
+/**
+ * Basic PII scrubber for ticket snippets used as examples.
+ * Removes obvious emails and Norwegian-style phone numbers.
+ */
+function sanitizeTicketText(text) {
+  if (!text || typeof text !== 'string') return '';
+  let cleaned = text;
+  // Emails
+  cleaned = cleaned.replace(/\b[\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '[REDACTED_EMAIL]');
+  // Phone numbers (very simple patterns, best-effort)
+  cleaned = cleaned.replace(/\b(?:\+?\d{2}\s*)?(?:\d{2}\s*){3,4}\b/g, '[REDACTED_PHONE]');
+  return cleaned;
+}
+
+/**
+ * Use ticket examples (historical admin replies) to synthesize a new answer.
+ * This is only called as a fallback when product/FAQ RAG has no data.
+ */
+async function answerFromTickets(userMessage) {
+  const topKTickets = 5;
+  const ticketDocs = await searchTickets(userMessage, topKTickets);
+  if (!ticketDocs || ticketDocs.length === 0) {
+    return null;
+  }
+
+  const examples = ticketDocs
+    .map((doc, idx) => {
+      const safe = sanitizeTicketText(doc.text || '');
+      return `Example ${idx + 1}:\n${safe}`;
+    })
+    .join('\n\n');
+
+  if (!process.env.OPENAI_API_KEY) {
+    return null;
+  }
+
+  const model = new ChatOpenAI({
+    openAIApiKey: process.env.OPENAI_API_KEY,
+    modelName: 'gpt-4o',
+    temperature: 0.5,
+  });
+
+  const systemPrompt = `You are a Visor.no customer support assistant.
+
+You are given anonymized examples of previous support tickets (customer questions and agent replies).
+Use them as guidance for tone, policies, and typical solutions, but ALWAYS answer the CURRENT user directly.
+
+CRITICAL:
+- Do NOT copy any personal data from the examples (names, emails, phone numbers, addresses, order IDs).
+- NEVER invent or output real-looking personal data.
+- Generalize from the examples and focus on the user's question.
+- Match the language of the user's current message (Norwegian vs English).
+
+If the examples are not sufficient, give a best-effort helpful answer and, if needed, suggest contacting kundeservice@test.visor.no or phone support.`;
+
+  const messages = [
+    new SystemMessage(systemPrompt),
+    new HumanMessage(
+      `Here are some historical ticket examples (sanitized):\n\n${examples}\n\nNow answer this new user question, in the same language as the question:\n\n"${userMessage}"`
+    ),
+  ];
+
+  const response = await model.invoke(messages);
+  return typeof response.content === 'string' ? response.content : String(response.content || '');
 }
 
 /**
@@ -109,6 +176,30 @@ async function ragTool({ query }) {
     console.error(`[RAG Tool] Error:`, error);
     return `Error searching knowledge base: ${error.message}`;
   }
+}
+
+/**
+ * Decide if RAG context is substantive (real product/FAQ answer) or only generic contact fallback.
+ * When the KB returns only "Fant ikke svar" / contact info, we treat it as "no data" and search tickets.
+ */
+function hasSubstantiveKbContext(ragContext) {
+  if (!ragContext || typeof ragContext !== 'string' || ragContext.startsWith('NO_KNOWLEDGE_BASE_DATA')) {
+    return false;
+  }
+  const c = ragContext.toLowerCase();
+  // Generic contact-only FAQ: "Fant ikke svar" + contact details, no real topic answer
+  const isGenericContactOnly =
+    c.includes('fant ikke svar') &&
+    (c.includes('kundeservice@') || c.includes('696 76 602'));
+  if (!isGenericContactOnly) return true;
+  // Substantive topic markers that indicate a real FAQ answer (not just "contact us")
+  const substantiveMarkers = [
+    'vipps', 'qr', 'leverings', 'absolute', 'motionblind', 'coulisse', 'tekstilprøve', 'tekstilprøver',
+    'nisje', 'montering', 'montasje', 'mål', 'henting', 'økern', 'port 1', 'plisse', 'rullegardin',
+    'lamell', 'persienne', 'veiledning', 'fratrekk', 'systembredde', 'image url', 'vips'
+  ];
+  const hasSubstantive = substantiveMarkers.some((m) => c.includes(m));
+  return hasSubstantive;
 }
 
 /**
@@ -366,9 +457,39 @@ Be helpful, professional, and expert-led.`;
           }
 
           switch (functionName) {
-            case 'rag_search':
-              result = await ragTool(args);
+            case 'rag_search': {
+              const ragResult = await ragTool(args);
+              const kbHasSubstantive = hasSubstantiveKbContext(ragResult);
+
+              // 1) KB has no real data (empty or only generic \"Fant ikke svar\" contact FAQ)
+              //    → prefer ticket-based answer if available.
+              if (!kbHasSubstantive) {
+                const ticketAnswer = await answerFromTickets(message);
+                if (ticketAnswer && ticketAnswer.trim().length > 0) {
+                  return ticketAnswer;
+                }
+              } else {
+                // 2) KB has substantive data, but we might still have a very strong ticket match.
+                //    If the top ticket chunk is highly similar, prefer ticket-based answer.
+                try {
+                  const topTickets = await searchTickets(message, 1);
+                  const top = topTickets && topTickets[0];
+                  if (top && typeof top.score === 'number' && top.score >= 0.8) {
+                    const ticketAnswer = await answerFromTickets(message);
+                    if (ticketAnswer && ticketAnswer.trim().length > 0) {
+                      return ticketAnswer;
+                    }
+                  }
+                } catch (err) {
+                  console.warn('[Tickets] Ticket search failed, falling back to KB only:', err.message);
+                }
+              }
+
+              // If we have substantive KB context but tickets were not clearly better,
+              // or ticket search failed, use the RAG result as usual.
+              result = ragResult;
               break;
+            }
             case 'get_order_details':
               console.log(`[Tool Call] get_order_details with args:`, args);
               try {
