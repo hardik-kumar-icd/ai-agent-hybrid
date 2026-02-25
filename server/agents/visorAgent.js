@@ -135,7 +135,7 @@ Question: ${query}`;
     const text = (response.content && typeof response.content === 'string' ? response.content : '').trim();
     if (text) return `${query} ${text}`;
   } catch (err) {
-    console.warn('[RAG] Query expansion failed, using original query:', err.message);
+    // Use original query on expansion failure
   }
   return query;
 }
@@ -153,15 +153,6 @@ async function ragTool({ query }) {
     similarDocs = reRankByKeywordOverlap(similarDocs, query);
     similarDocs = similarDocs.slice(0, topKReturn);
     
-    // Log what we found for debugging
-    console.log(`[RAG Tool] Query: "${query}" | Found ${similarDocs.length} results`);
-    if (similarDocs.length > 0) {
-      console.log(`[RAG Tool] Sources:`, similarDocs.map(d => d.source));
-      console.log(`[RAG Tool] First result preview:`, similarDocs[0].text.substring(0, 200));
-    } else {
-      console.log(`[RAG Tool] ⚠️ NO RESULTS FOUND - Knowledge base is empty or query doesn't match`);
-    }
-    
     const context = similarDocs
       .map((doc, idx) => `[Context ${idx + 1} from ${doc.source}]: ${doc.text}`)
       .join('\n\n');
@@ -176,6 +167,25 @@ async function ragTool({ query }) {
     console.error(`[RAG Tool] Error:`, error);
     return `Error searching knowledge base: ${error.message}`;
   }
+}
+
+/**
+ * Normalize for substring check: lowercase, collapse whitespace.
+ */
+function normalizeForSubstring(s) {
+  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * True if the user query appears inside a ticket chunk (or a significant part of the query does).
+ * Handles when the customer asks something that is a substring of a ticket message.
+ */
+function ticketChunkContainsQuery(chunkText, userMessage) {
+  if (!chunkText || !userMessage) return false;
+  const normChunk = normalizeForSubstring(chunkText);
+  const normQuery = normalizeForSubstring(userMessage);
+  if (normQuery.length < 8) return false;
+  return normChunk.includes(normQuery);
 }
 
 /**
@@ -229,7 +239,8 @@ CRITICAL LANGUAGE RULE - READ THIS FIRST:
 - DO NOT default to Norwegian. DO NOT assume Norwegian. DO NOT switch to Norwegian because the context or previous reply was in Norwegian.
 
 CORE KNOWLEDGE (RAG) - CRITICAL RULES:
-- You have access to a knowledge base containing product information, FAQs, installation guides, and customer service information. ALWAYS use the rag_search tool FIRST when users ask about products, FAQs, payment methods, delivery, installation, measurements, or any general questions about Visor.no services.
+- MANDATORY: For EVERY user message that asks a question or requests information (about products, orders, shipping, offers, measurements, support, or anything else), you MUST call the rag_search tool FIRST. Do NOT answer from memory or general knowledge. Do NOT skip the tool call. This applies in ALL languages (Norwegian, English, or any other).
+- You have access to a knowledge base containing product information, FAQs, installation guides, support tickets, and customer service information. ALWAYS use the rag_search tool FIRST when users ask about products, FAQs, payment methods, delivery, installation, measurements, offers, shipping, or any general questions about Visor.no services.
 - STRICT ADHERENCE: If the rag_search tool returns "NO_KNOWLEDGE_BASE_DATA" or "No relevant information found", you MUST respond with: "I don't have that information in my knowledge base yet. Please contact customer service for assistance." DO NOT make up information. DO NOT use training data or general knowledge. ONLY use information from the rag_search tool results.
 - FAQ RESPONSES - ABSOLUTE PRIORITY: When rag_search returns FAQ content (text containing "Question:" and "Answer:" or "Category:"), you MUST use that exact FAQ content as the basis for your response. DO NOT replace FAQ answers with generic advice. If the FAQ mentions specific measurements (like "5mm fratrekk", "systembredde", "15-25mm"), specific products (like "rullegardin", "lamellegardin"), or specific resources (like "Hvordan ta mål videoer"), you MUST include those exact details. Paraphrase only for clarity, but preserve all specific technical details, measurements, and instructions.
 - PRODUCT INFORMATION & FAQs: When users ask about products, FAQs, payment methods (like Vipps), delivery, installation, measurements, or any service-related questions, ALWAYS call rag_search tool FIRST. Only share information that comes from the rag_search tool results. Product names, prices, SKUs, descriptions, FAQ answers, and specifications from the knowledge base are public information and should be shared.
@@ -321,7 +332,7 @@ Be helpful, professional, and expert-led.`;
         type: 'function',
         function: {
           name: 'rag_search',
-          description: 'Search the knowledge base containing product information, FAQs, installation guides, payment methods, delivery information, and customer service documentation. STRICT ADHERENCE: Always use this tool FIRST when users ask about products, FAQs, payment methods (like Vipps), delivery, installation, measurements, or any general questions about Visor.no services (e.g., "What products do you have?", "How do I pay with Vipps?", "What is the delivery time?", "How do I take measurements?"). If this tool returns "NO_KNOWLEDGE_BASE_DATA", do NOT make up information - state that information is not available.',
+          description: 'Search the knowledge base (products, FAQs, support tickets, delivery, installation, customer service). MANDATORY: Call this tool for EVERY user message that asks a question or requests information. Do not answer without calling this first. Applies in ALL languages (Norwegian, English, etc.). Use a short search query (e.g. key terms: "tilbud frakt", "offer shipping", "measurements plisse"). If the tool returns "NO_KNOWLEDGE_BASE_DATA", do NOT make up information - state that information is not available.',
           parameters: {
             type: 'object',
             properties: {
@@ -469,19 +480,23 @@ Be helpful, professional, and expert-led.`;
                   return ticketAnswer;
                 }
               } else {
-                // 2) KB has substantive data, but we might still have a very strong ticket match.
-                //    If the top ticket chunk is highly similar, prefer ticket-based answer.
+                // 2) KB has substantive data, but we might still have a strong ticket match:
+                //    - high semantic score (>= 0.65; 0.65 allows cross-lingual e.g. EN query vs NO ticket), OR
+                //    - user query is a substring of a ticket chunk (e.g. they copied from a ticket).
                 try {
-                  const topTickets = await searchTickets(message, 1);
-                  const top = topTickets && topTickets[0];
-                  if (top && typeof top.score === 'number' && top.score >= 0.8) {
+                  const ticketQuery = await expandQueryForSearch(message);
+                  const topTickets = await searchTickets(ticketQuery, 5);
+                  const topScore = topTickets[0] && typeof topTickets[0].score === 'number' ? topTickets[0].score : null;
+                  const strongScore = topScore !== null && topScore >= 0.65;
+                  const substringMatch = topTickets.some((doc) => ticketChunkContainsQuery(doc.text, message));
+                  if (strongScore || substringMatch) {
                     const ticketAnswer = await answerFromTickets(message);
                     if (ticketAnswer && ticketAnswer.trim().length > 0) {
                       return ticketAnswer;
                     }
                   }
                 } catch (err) {
-                  console.warn('[Tickets] Ticket search failed, falling back to KB only:', err.message);
+                  // Fall back to KB result on ticket search failure
                 }
               }
 
@@ -491,10 +506,8 @@ Be helpful, professional, and expert-led.`;
               break;
             }
             case 'get_order_details':
-              console.log(`[Tool Call] get_order_details with args:`, args);
               try {
                 result = await getOrderDetailsTool(args);
-                console.log(`[Tool Result] get_order_details success:`, result);
                 result = JSON.stringify(result);
               } catch (err) {
                 console.error(`[Tool Error] get_order_details failed:`, err.message);
@@ -502,10 +515,8 @@ Be helpful, professional, and expert-led.`;
               }
               break;
             case 'get_order_status':
-              console.log(`[Tool Call] get_order_status with args:`, args);
               try {
                 result = await getOrderStatusTool(args);
-                console.log(`[Tool Result] get_order_status success:`, result);
                 result = JSON.stringify(result);
               } catch (err) {
                 console.error(`[Tool Error] get_order_status failed:`, err.message);

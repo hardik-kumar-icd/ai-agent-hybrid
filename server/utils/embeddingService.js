@@ -173,57 +173,18 @@ async function searchSimilar(query, topK = 3) {
       text: match.metadata?.text || '',
       source: match.metadata?.source || '',
       chunkId: match.metadata?.chunk_id || match.id,
-      uploadTimestamp: match.metadata?.upload_timestamp || 0, // Default to 0 for old data without timestamp
+      uploadTimestamp: match.metadata?.upload_timestamp || 0,
     }));
 
-    // AGGRESSIVE RECENCY PRIORITIZATION:
-    // Separate results into "new" (has timestamp > 0) and "old" (timestamp = 0)
-    const newResults = allResults.filter(r => r.uploadTimestamp > 0);
-    const oldResults = allResults.filter(r => r.uploadTimestamp === 0);
-
-    // Sort new results by timestamp (newest first), then by score
-    newResults.sort((a, b) => {
-      if (a.uploadTimestamp !== b.uploadTimestamp) {
-        return b.uploadTimestamp - a.uploadTimestamp; // Newest first
-      }
-      return b.score - a.score; // Higher score first
+    // Prioritize by RELEVANCE (score) so FAQ/product chunks can win over newer ticket chunks.
+    // When FAQs and tickets are both ingested, "Vipps" / "tekstilprøver" should match FAQ chunks.
+    allResults.sort((a, b) => {
+      const scoreA = typeof a.score === 'number' ? a.score : 0;
+      const scoreB = typeof b.score === 'number' ? b.score : 0;
+      return scoreB - scoreA; // Higher score first
     });
 
-    // Sort old results by score only
-    oldResults.sort((a, b) => b.score - a.score);
-
-    // STRATEGY: Prioritize new uploads heavily
-    // If we have new results, use them first (even if scores are lower)
-    // Only fill remaining slots with old results if needed
-    let finalResults = [];
-    
-    if (newResults.length > 0) {
-      // We have new uploads - prioritize them heavily
-      // Take up to topK from new results
-      const newCount = Math.min(newResults.length, topK);
-      finalResults = newResults.slice(0, newCount);
-      
-      // If we need more results and have old results, add them
-      if (finalResults.length < topK && oldResults.length > 0) {
-        const remainingSlots = topK - finalResults.length;
-        finalResults = finalResults.concat(oldResults.slice(0, remainingSlots));
-      }
-      
-      console.log(`[RAG Search] Query: "${query}" | Prioritizing ${newResults.length} new upload(s) over ${oldResults.length} old result(s)`);
-    } else {
-      // No new uploads - fall back to old results
-      finalResults = oldResults.slice(0, topK);
-      console.log(`[RAG Search] Query: "${query}" | No new uploads found, using ${finalResults.length} old result(s)`);
-    }
-
-    // Remove uploadTimestamp from final results
-    finalResults = finalResults.map(({ uploadTimestamp, ...rest }) => rest);
-
-    // Log for debugging (only if multiple sources found)
-    const uniqueSources = [...new Set(finalResults.map(r => r.source))];
-    if (uniqueSources.length > 1) {
-      console.log(`[RAG Search] Query: "${query}" | Found ${finalResults.length} results from ${uniqueSources.length} sources:`, uniqueSources);
-    }
+    const finalResults = allResults.slice(0, topK).map(({ uploadTimestamp, ...rest }) => rest);
 
     return finalResults;
   } catch (error) {
