@@ -1,0 +1,330 @@
+:root {
+  --admin-bg: #0f172a;
+  --admin-surface: #020617;
+  --admin-border: #1f2937;
+  --admin-primary: #22c55e;
+  --admin-primary-soft: rgba(34, 197, 94, 0.12);
+  --admin-danger: #ef4444;
+  --admin-danger-soft: rgba(239, 68, 68, 0.12);
+  --admin-text: #e5e7eb;
+  --admin-text-muted: #9ca3af;
+  --admin-input-bg: #020617;
+  --admin-input-border: #374151;
+  --admin-radius: 10px;
+  --admin-shadow: 0 18px 45px rgba(0, 0, 0, 0.6);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: radial-gradient(circle at top, #020617 0, #020617 40%, #000 100%);
+  color: var(--admin-text);
+}
+
+.admin-root {
+  min-height: 100vh;
+  padding: 32px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+@media (min-width: 768px) {
+  .admin-root {
+    padding: 40px;
+  }
+}
+
+.admin-header {
+  max-width: 960px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+.admin-header h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+  letter-spacing: 0.02em;
+}
+
+.admin-subtitle {
+  margin: 0;
+  color: var(--admin-text-muted);
+  font-size: 14px;
+  max-width: 640px;
+}
+
+.admin-main {
+  max-width: 1040px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: flex-start;
+}
+
+@media (max-width: 900px) {
+  .admin-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.admin-card {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 0.94));
+  border-radius: var(--admin-radius);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  padding: 20px 18px 18px;
+  box-shadow: var(--admin-shadow);
+  position: relative;
+  overflow: hidden;
+}
+
+.admin-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at top right, rgba(34, 197, 94, 0.14), transparent 55%);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.admin-card h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #f9fafb;
+}
+
+.admin-help {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--admin-text-muted);
+}
+
+.admin-input {
+  width: 100%;
+  padding: 10px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--admin-input-border);
+  background: var(--admin-input-bg);
+  color: var(--admin-text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.admin-input:focus {
+  border-color: var(--admin-primary);
+  box-shadow: 0 0 0 1px var(--admin-primary-soft);
+  background: #020617;
+}
+
+.admin-warning {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #fbbf24;
+}
+
+.admin-upload-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+@media (min-width: 640px) {
+  .admin-upload-row {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
+.admin-upload-row input[type='file'] {
+  color: var(--admin-text-muted);
+  font-size: 13px;
+}
+
+.admin-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: radial-gradient(circle at top left, rgba(148, 163, 184, 0.15), rgba(15, 23, 42, 0.95));
+  color: #e5e7eb;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.08s ease,
+    box-shadow 0.15s ease;
+  white-space: nowrap;
+}
+
+.admin-button.primary {
+  border-color: rgba(34, 197, 94, 0.9);
+  background: radial-gradient(circle at top left, rgba(34, 197, 94, 0.16), rgba(5, 46, 22, 0.94));
+}
+
+.admin-button.danger {
+  border-color: rgba(239, 68, 68, 0.9);
+  background: radial-gradient(circle at top left, rgba(239, 68, 68, 0.18), rgba(69, 10, 10, 0.96));
+}
+
+.admin-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.9);
+  border-color: rgba(148, 163, 184, 0.8);
+}
+
+.admin-button.primary:hover:not(:disabled) {
+  border-color: rgba(34, 197, 94, 1);
+}
+
+.admin-button.danger:hover:not(:disabled) {
+  border-color: rgba(239, 68, 68, 1);
+}
+
+.admin-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+  transform: none;
+  box-shadow: none;
+}
+
+.admin-upload-log {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.admin-upload-log h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #e5e7eb;
+}
+
+.admin-log-empty {
+  font-size: 12px;
+  color: var(--admin-text-muted);
+}
+
+.admin-upload-log ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.admin-log-entry {
+  padding: 4px 0;
+}
+
+.admin-log-entry.success {
+  color: #bbf7d0;
+}
+
+.admin-log-entry.error {
+  color: #fecaca;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.admin-test-search {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-test-search label {
+  font-size: 12px;
+  color: var(--admin-text-muted);
+}
+
+.admin-active-action {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--admin-text-muted);
+}
+
+.admin-status {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #a5b4fc;
+}
+
+.admin-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #fecaca;
+}
+
+.admin-response {
+  margin-top: 10px;
+  padding: 10px 10px 8px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.admin-response-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--admin-text-muted);
+}
+
+.admin-response-label {
+  font-weight: 500;
+  color: #e5e7eb;
+}
+
+.admin-response-status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
+}
+
+.admin-response-body {
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: #020617;
+  max-height: 260px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+}
+
+.admin-footer {
+  max-width: 960px;
+  margin: 0 auto;
+  font-size: 11px;
+  color: var(--admin-text-muted);
+}
+
+.admin-footer code {
+  background: rgba(15, 23, 42, 0.9);
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+

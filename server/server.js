@@ -437,6 +437,15 @@ app.post('/upload', upload.single('file'), (req, res) => {
   }
 });
 
+// Serve the admin dashboard SPA from /admin
+// The Vite admin build outputs to server/public/admin
+app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
+
+// Optional SPA fallback for client-side routing under /admin
+// app.get('/admin/*', (req, res) => {
+//   res.sendFile(path.join(__dirname, 'public/admin/index.html'));
+// });
+
 // Error-handling middleware for Multer errors (must be after all routes)
 app.use((error, req, res, next) => {
   // Handle Multer errors

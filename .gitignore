@@ -22,6 +22,9 @@ logs/
 # Uploads
 server/uploads/
 
+# Admin build output
+server/public/
+
 # React build outputs
 client/dist/
 

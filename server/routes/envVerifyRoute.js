@@ -156,7 +156,7 @@ router.get('/', async (req, res) => {
     const services = {
       openai: openaiResult.status,
       pinecone: pineconeResult.status,
-      woocommerce: woocommerceResult.status
+      // woocommerce: woocommerceResult.status
     };
 
     // Determine overall status
