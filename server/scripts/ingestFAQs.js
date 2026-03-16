@@ -4,8 +4,9 @@
  * Default: uses visor_faqs.json in project root
  */
 
-require('dotenv').config();
 const path = require('path');
+// Load server/.env so the script works when run from project root
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const fs = require('fs');
 const { extractText } = require('../utils/fileParser');
 const { splitText } = require('../utils/textSplitter');

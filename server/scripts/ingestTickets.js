@@ -6,9 +6,10 @@
  * Default path: project root/tickets_fixed.jsonl
  */
 
-require('dotenv').config();
-const fs = require('fs');
 const path = require('path');
+// Load server/.env so the script works when run from project root
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
+const fs = require('fs');
 const readline = require('readline');
 const { embedAndStore } = require('../utils/embeddingService');
 

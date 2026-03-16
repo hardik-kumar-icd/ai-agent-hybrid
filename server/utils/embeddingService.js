@@ -1,5 +1,7 @@
 const { OpenAIEmbeddings } = require('@langchain/openai');
 const { Pinecone } = require('@pinecone-database/pinecone');
+const { Tiktoken } = require('js-tiktoken/lite');
+const cl100k_base = require('js-tiktoken/ranks/cl100k_base');
 
 // Initialize Pinecone client
 let pineconeClient = null;
@@ -85,8 +87,35 @@ async function initializePinecone() {
   return pineconeIndex;
 }
 
+// Batch size for embedding + upsert (avoids rate limits and request size limits for large files)
+const EMBED_BATCH_SIZE = 100;
+
+// text-embedding-3-large max is 8192; use slightly less to account for API/tokenizer variance
+const MAX_EMBED_TOKENS = 8180;
+
+let _embeddingEncoder = null;
+function getEmbeddingEncoder() {
+  if (!_embeddingEncoder) _embeddingEncoder = new Tiktoken(cl100k_base);
+  return _embeddingEncoder;
+}
+
 /**
- * Create embeddings and store them in Pinecone
+ * Truncate text to fit within the embedding model's token limit (8192 tokens).
+ * Uses cl100k_base tokenizer (same as text-embedding-3-large).
+ * @param {string} text
+ * @returns {string}
+ */
+function truncateForEmbedding(text) {
+  if (!text || typeof text !== 'string') return '';
+  const enc = getEmbeddingEncoder();
+  const tokens = enc.encode(text);
+  if (tokens.length <= MAX_EMBED_TOKENS) return text;
+  const truncated = enc.decode(tokens.slice(0, MAX_EMBED_TOKENS));
+  return truncated + ' [truncated]';
+}
+
+/**
+ * Create embeddings and store them in Pinecone (in batches for large doc sets).
  * @param {Array} docs - Array of document chunks
  * @param {string} sourceName - Name/source identifier for the documents
  * @returns {Promise<void>}
@@ -102,32 +131,45 @@ async function embedAndStore(docs, sourceName) {
       modelName: 'text-embedding-3-large',
     });
 
-    // Generate embeddings for all documents
-    const texts = docs.map(doc => doc.pageContent || doc);
-    const vectors = await embeddings.embedDocuments(texts);
-
-    // Prepare vectors for upsert
     const uploadTimestamp = Date.now();
-    const vectorsToUpsert = vectors.map((embedding, idx) => {
-      const doc = docs[idx];
-      const chunkId = `${sourceName}_chunk_${idx}_${uploadTimestamp}`;
-      
-      return {
-        id: chunkId,
-        values: embedding,
-        metadata: {
-          source: sourceName,
-          chunk_id: chunkId,
-          text: doc.pageContent || doc,
-          upload_timestamp: uploadTimestamp, // Add timestamp for prioritizing recent uploads
-        },
-      };
-    });
+    let totalStored = 0;
 
-    // Upsert vectors into Pinecone
-    await index.upsert(vectorsToUpsert);
+    const totalBatches = Math.ceil(docs.length / EMBED_BATCH_SIZE);
+    for (let offset = 0; offset < docs.length; offset += EMBED_BATCH_SIZE) {
+      const batchNum = Math.floor(offset / EMBED_BATCH_SIZE) + 1;
+      console.log(`  Processing batch ${batchNum}/${totalBatches} (chunks ${offset + 1}-${Math.min(offset + EMBED_BATCH_SIZE, docs.length)} of ${docs.length})...`);
 
-    console.log(`Successfully embedded and stored ${vectorsToUpsert.length} chunks from ${sourceName}`);
+      const batch = docs.slice(offset, offset + EMBED_BATCH_SIZE);
+      const texts = batch.map(doc => truncateForEmbedding(doc.pageContent || doc));
+      const vectors = await embeddings.embedDocuments(texts);
+
+      const vectorsToUpsert = vectors.map((embedding, idx) => {
+        const doc = batch[idx];
+        const globalIdx = offset + idx;
+        const chunkId = `${sourceName}_chunk_${globalIdx}_${uploadTimestamp}`;
+        const storedText = truncateForEmbedding(doc.pageContent || doc);
+        return {
+          id: chunkId,
+          values: embedding,
+          metadata: {
+            source: sourceName,
+            chunk_id: chunkId,
+            text: storedText,
+            upload_timestamp: uploadTimestamp,
+          },
+        };
+      });
+
+      await index.upsert(vectorsToUpsert);
+      totalStored += vectorsToUpsert.length;
+      console.log(`  Stored batch ${batchNum}/${totalBatches}: ${totalStored}/${docs.length} chunks`);
+      // Small delay between batches to reduce rate-limit risk
+      if (offset + EMBED_BATCH_SIZE < docs.length) {
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+
+    console.log(`Successfully embedded and stored ${totalStored} chunks from ${sourceName}`);
   } catch (error) {
     console.error('Error in embedAndStore:', error);
     throw new Error(`Failed to embed and store documents: ${error.message}`);
