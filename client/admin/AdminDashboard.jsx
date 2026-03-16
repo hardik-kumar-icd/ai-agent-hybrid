@@ -24,6 +24,18 @@ function AdminDashboard() {
   const [activeAction, setActiveAction] = useState('');
   const [testQuery, setTestQuery] = useState('What products do you have?');
 
+  const sanitizeToken = (raw) => {
+    if (!raw) return '';
+    let value = raw.trim();
+    if (value.startsWith('REACT_APP_ADMIN_TOKEN=')) {
+      value = value.replace(/^REACT_APP_ADMIN_TOKEN=/, '').trim();
+    }
+    if (value.startsWith('ADMIN_API_KEY=')) {
+      value = value.replace(/^ADMIN_API_KEY=/, '').trim();
+    }
+    return value;
+  };
+
   // Detect API base URL dynamically from the current origin.
   const apiClient = useMemo(() => {
     const origin =
@@ -38,7 +50,8 @@ function AdminDashboard() {
   }, []);
 
   const requireToken = () => {
-    if (!token.trim()) {
+    const normalized = sanitizeToken(token);
+    if (!normalized) {
       setActionError('Admin token is required. Paste your ADMIN_API_KEY from Render.');
       return false;
     }
@@ -69,12 +82,13 @@ function AdminDashboard() {
 
     for (const file of files) {
       try {
+        const normalizedToken = sanitizeToken(token);
         const formData = new FormData();
         formData.append('file', file);
 
         const response = await apiClient.post('/api/ingest', formData, {
           headers: {
-            Authorization: `Bearer ${token.trim()}`,
+            Authorization: `Bearer ${normalizedToken}`,
           },
         });
 
@@ -117,11 +131,12 @@ function AdminDashboard() {
     setActionResponse(null);
 
     try {
+      const normalizedToken = sanitizeToken(token);
       const config = {
         method,
         url,
         headers: {
-          Authorization: `Bearer ${token.trim()}`,
+          Authorization: `Bearer ${normalizedToken}`,
         },
         ...options,
       };
