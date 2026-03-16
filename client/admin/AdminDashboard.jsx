@@ -45,7 +45,7 @@ function AdminDashboard() {
 
     return axios.create({
       baseURL: origin || undefined,
-      timeout: 30000,
+      timeout: 120000,
     });
   }, []);
 
