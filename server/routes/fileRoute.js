@@ -8,6 +8,7 @@ const { splitText } = require('../utils/textSplitter');
 const { embedAndStore } = require('../utils/embeddingService');
 const { requireAdminAuth } = require('../middlewares/auth');
 const { logApiRequest } = require('../utils/securityLogger');
+const MAX_FILE_SIZE_MB = Number(process.env.MAX_FILE_SIZE_MB || 50);
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -27,7 +28,7 @@ const storage = multer.diskStorage({
 const upload = multer({ 
   storage: storage,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
+    fileSize: MAX_FILE_SIZE_MB * 1024 * 1024
   },
   fileFilter: (req, file, cb) => {
     // Accept PDF, text, JSON, and office files
