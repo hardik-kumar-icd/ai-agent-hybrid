@@ -7,7 +7,8 @@
 .visor-chat-widget {
   position: fixed;
   bottom: 20px;
-  right: 20px;
+  left: 20px;
+  right: auto;
   z-index: 9999;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
@@ -52,7 +53,8 @@
 .chat-window {
   position: absolute;
   bottom: 70px;
-  right: 0;
+  left: 0;
+  right: auto;
   width: 380px;
   max-width: calc(100vw - 40px);
   height: 600px;
@@ -252,18 +254,11 @@
 }
 
 .chat-options-container.compact .chat-option-btn {
+  flex: 1 1 calc(50% - 4px);
+  min-width: min(100%, 120px);
   padding: 10px 12px;
   font-size: 13px;
   text-align: center;
-}
-
-.chat-options-container.compact .chat-option-btn:nth-child(1) {
-  width: calc(20% - 4px);
-}
-
-.chat-options-container.compact .chat-option-btn:nth-child(2),
-.chat-options-container.compact .chat-option-btn:nth-child(3) {
-  width: calc(40% - 4px);
 }
 
 .chat-option-btn {
@@ -286,6 +281,28 @@
 
 .chat-option-btn:active {
   transform: translateY(0);
+}
+
+/* Guides: summary + link in message; primary CTA opens same URL in new tab */
+.chat-guides-cta {
+  margin: 8px 0 12px;
+  padding: 0 4px;
+}
+
+.chat-guides-open-tab {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, var(--widget-primary-color) 0%, var(--widget-accent-color) 100%);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.chat-guides-open-tab:hover {
+  opacity: 0.95;
 }
 
 /* Order Form */
@@ -488,17 +505,21 @@
 }
 
 @media (max-width: 480px) {
+  .visor-chat-widget {
+    left: 15px;
+    right: auto;
+  }
+
   .chat-window {
     width: calc(100vw - 20px);
     height: calc(100vh - 120px);
     bottom: 80px;
-    right: 10px;
+    left: 0;
+    right: auto;
   }
 
   .chat-button {
     width: 48px;
     height: 48px;
-    bottom: 15px;
-    right: 15px;
   }
 }
