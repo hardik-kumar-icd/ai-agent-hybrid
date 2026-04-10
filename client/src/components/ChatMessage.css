@@ -76,6 +76,44 @@
   border-bottom-left-radius: 4px;
 }
 
+/* Assistant bubble: text + primary action (e.g. open guides) in one card */
+.chat-message-assistant-bubble {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  min-width: 0;
+  border-radius: 18px;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  background: #f0f0f0;
+}
+
+.chat-message-assistant-bubble .chat-message-text--with-inline-action {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  padding-bottom: 8px;
+}
+
+.chat-message-guides-btn {
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px;
+  border: none;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #fff;
+  cursor: pointer;
+  background: linear-gradient(135deg, var(--widget-primary-color, #667eea) 0%, var(--widget-accent-color, #764ba2) 100%);
+}
+
+.chat-message-guides-btn:hover {
+  opacity: 0.95;
+}
+
 .chat-message-text strong {
   font-weight: 600;
 }
@@ -91,6 +129,37 @@
 .chat-message-text .chat-message-link:hover {
   text-decoration: none;
   opacity: 0.9;
+}
+
+.chat-message-video-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-message-video-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #333;
+}
+
+.chat-message-video-frame {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+}
+
+.chat-message-video-frame iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
 }
 
 .typing-indicator {

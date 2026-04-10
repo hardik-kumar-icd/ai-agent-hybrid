@@ -8,7 +8,9 @@ import './ChatWidget.css';
  * Main chat widget that can be embedded on WordPress/Magento sites
  * Supports both 'user' and 'admin' modes
  */
-const WELCOME_MESSAGE = 'Hei! Jeg er Visor.no assistenten. Hvordan kan jeg hjelpe deg?';
+const WELCOME_MESSAGE = 'Hei! Jeg er din assistent på visor.no. Velg en kategori eller skriv spørsmålet ditt nedenfor, så skal jeg hjelpe deg så godt som mulig.';
+/** Veiledninger (måling / montering) — same CMS page customers use on the shop */
+const GUIDES_PAGE_URL = 'https://test.visor.no/how-to-install/';
 const ENGLISH_PLACEHOLDER = 'Type your message here...';
 const NORWEGIAN_PLACEHOLDER = 'Skriv din melding her...';
 const ENGLISH_DETECT_REGEX = /\b(what|how|order|status|the|is|can|do|does|please|help|want|need|hello|hi|when|where|which|why|tell|me|about)\b/i;
@@ -199,6 +201,16 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     if (option === 'order') {
       // For order status, we'll show the form inputs
       setMessages(prev => [...prev, { role: 'user', content: 'Order Status' }]);
+    } else if (option === 'install_guides') {
+      const label = conversationLanguage === 'en'
+        ? 'Installation guides'
+        : 'Monteringsveiledninger';
+      const prompt =
+        conversationLanguage === 'en'
+          ? 'Enter your order number and email, and I will show the relevant installation videos for the products in your order.'
+          : 'Skriv inn ordrenummer og e-postadressen brukt i bestillingen, så viser jeg relevante monteringsvideoer for produktene i ordren din.';
+      setMessages(prev => [...prev, { role: 'user', content: label }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: prompt }]);
     } else if (option === 'faqs') {
       setMessages(prev => [...prev, { role: 'user', content: 'FAQs' }]);
       const promptMessage = conversationLanguage === 'en' 
@@ -211,6 +223,144 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
         ? 'Enter your product related query'
         : 'Skriv inn produktrelatert spørsmål';
       setMessages(prev => [...prev, { role: 'assistant', content: promptMessage }]);
+    } else if (option === 'guides') {
+      const userLabel = conversationLanguage === 'en' ? 'How do I order?' : 'Hvordan bestiller jeg?';
+      const intro =
+        conversationLanguage === 'en'
+          ? `Ordering is done in our online store like any other purchase. For **measuring** and **installing** your products, we have collected videos and step-by-step guides on one page.`
+          : `Bestilling skjer i nettbutikken som vanlig. For **måling** og **montering** har vi samlet videoer og steg-for-steg-veiledning på én side.`;
+      setMessages(prev => [...prev, { role: 'user', content: userLabel }]);
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: intro, guidesButton: true },
+      ]);
+    }
+  };
+
+  const openGuidesInNewTab = () => {
+    window.open(GUIDES_PAGE_URL, '_blank', 'noopener,noreferrer');
+  };
+
+  const toSafeEmbedSrc = (url) => {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.toLowerCase();
+
+      // YouTube: convert watch?v= -> /embed/
+      if (host === 'www.youtube.com' || host === 'youtube.com') {
+        if (u.pathname === '/watch') {
+          const v = u.searchParams.get('v');
+          if (v) return `https://www.youtube.com/embed/${encodeURIComponent(v)}`;
+        }
+        if (u.pathname.startsWith('/embed/')) return u.toString();
+      }
+      if (host === 'youtu.be') {
+        const id = u.pathname.replace('/', '').trim();
+        if (id) return `https://www.youtube.com/embed/${encodeURIComponent(id)}`;
+      }
+
+      // Vimeo: accept vimeo.com/{id} -> player.vimeo.com/video/{id}
+      if (host === 'vimeo.com') {
+        const id = u.pathname.replace('/', '').trim();
+        if (/^\d+$/.test(id)) return `https://player.vimeo.com/video/${id}`;
+      }
+      if (host === 'player.vimeo.com' && u.pathname.startsWith('/video/')) return u.toString();
+
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const handleInstallGuidesSubmit = async () => {
+    if (!orderEmail.trim() || !orderId.trim()) {
+      setError(conversationLanguage === 'en'
+        ? 'Please fill in both email and order ID'
+        : 'Vennligst fyll inn både e-post og ordrenummer');
+      return;
+    }
+
+    const emailValue = orderEmail.trim();
+    const orderIdValue = orderId.trim();
+    const userMessage =
+      conversationLanguage === 'en'
+        ? `Get installation videos for Order ID: ${orderIdValue}`
+        : `Hent monteringsvideoer for ordrenummer: ${orderIdValue}`;
+
+    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const apiBaseUrl = baseUrl || 'https://sinkerless-sententially-abrielle.ngrok-free.dev';
+      const response = await fetch(`${apiBaseUrl}/api/order/install-guides`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Conversation-Id': conversationId,
+        },
+        body: JSON.stringify({
+          order_id: orderIdValue,
+          email: emailValue,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.message || `Server error: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      const lines = (data.videos || [])
+        .map((v) => {
+          const title = (v.title || '').trim();
+          const url = (v.url || '').trim();
+          if (!url) return null;
+          const safeTitle = title || (conversationLanguage === 'en' ? 'Open video' : 'Åpne video');
+          return `- [${safeTitle}](${url})`;
+        })
+        .filter(Boolean);
+
+      const embeds = (data.videos || [])
+        .map((v) => {
+          const url = (v.url || '').trim();
+          const title = (v.title || '').trim();
+          const src = url ? toSafeEmbedSrc(url) : null;
+          if (!src) return null;
+          return { src, title: title || (conversationLanguage === 'en' ? 'Video' : 'Video') };
+        })
+        .filter(Boolean)
+        .slice(0, 3);
+
+      const assistantText =
+        lines.length > 0
+          ? (conversationLanguage === 'en'
+              ? `Here are the installation videos I found:\n${lines.join('\n')}`
+              : `Her er monteringsvideoene jeg fant:\n${lines.join('\n')}`)
+          : (conversationLanguage === 'en'
+              ? 'I found your order, but I could not match any category videos yet. Showing the general installation video instead.'
+              : 'Jeg fant ordren, men klarte ikke å matche noen kategori-videoer ennå. Viser den generelle monteringsvideoen i stedet.');
+
+      setMessages(prev => [...prev, { role: 'assistant', content: assistantText, videoEmbeds: embeds }]);
+
+      setOrderEmail('');
+      setOrderId('');
+      setSelectedOption(null);
+
+      setTimeout(() => {
+        setShowOptionsAgain(true);
+        setTimeout(() => {
+          if (lastMessageRef.current) {
+            lastMessageRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+          }
+        }, 100);
+      }, 2000);
+    } catch (error) {
+      console.error('Install videos error:', error);
+      setError(error.message || 'Failed to fetch installation videos. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -376,7 +526,9 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                             className="chat-option-btn" 
                             onClick={() => handleOptionSelect('faqs')}
                           >
-                            FAQs
+                            {conversationLanguage === 'en'
+                              ? 'FAQs, frequently asked questions and answers'
+                              : 'FAQs, stilte spørsmål og svar'}
                           </button>
                           <button 
                             className="chat-option-btn" 
@@ -390,6 +542,20 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                           >
                             {conversationLanguage === 'en' ? 'Order Status' : 'Ordrestatus'}
                           </button>
+                          <button
+                            className="chat-option-btn"
+                            onClick={() => handleOptionSelect('install_guides')}
+                          >
+                            {conversationLanguage === 'en'
+                              ? 'Installation guides'
+                              : 'Monteringsveiledninger'}
+                          </button>
+                          <button
+                            className="chat-option-btn"
+                            onClick={() => handleOptionSelect('guides')}
+                          >
+                            {conversationLanguage === 'en' ? 'How do I order?' : 'Hvordan bestiller jeg?'}
+                          </button>
                         </div>
                       </div>
                     )}
@@ -399,7 +565,18 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                   const isLastAssistantMessage = idx === messages.length - 1 && msg.role === 'assistant';
                   return (
                     <div key={idx} ref={isLastAssistantMessage ? lastMessageRef : null}>
-                      <ChatMessage message={msg.content} role={msg.role} />
+                      <ChatMessage
+                        message={msg.content}
+                        role={msg.role}
+                        guidesButton={Boolean(msg.guidesButton)}
+                        onGuidesClick={openGuidesInNewTab}
+                        guidesButtonLabel={
+                          conversationLanguage === 'en'
+                            ? 'Open guides in new tab'
+                            : 'Åpne veiledninger i ny fane'
+                        }
+                        videoEmbeds={msg.videoEmbeds || null}
+                      />
                     </div>
                   );
                 })}
@@ -415,7 +592,9 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                         className="chat-option-btn" 
                         onClick={() => handleOptionSelect('faqs')}
                       >
-                        FAQs
+                        {conversationLanguage === 'en'
+                          ? 'FAQs, frequently asked questions and answers'
+                          : 'FAQs, stilte spørsmål og svar'}
                       </button>
                       <button 
                         className="chat-option-btn" 
@@ -429,10 +608,24 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                       >
                         {conversationLanguage === 'en' ? 'Order Status' : 'Ordrestatus'}
                       </button>
+                      <button
+                        className="chat-option-btn"
+                        onClick={() => handleOptionSelect('install_guides')}
+                      >
+                        {conversationLanguage === 'en'
+                          ? 'Installation guides'
+                          : 'Monteringsveiledninger'}
+                      </button>
+                      <button
+                        className="chat-option-btn"
+                        onClick={() => handleOptionSelect('guides')}
+                      >
+                        {conversationLanguage === 'en' ? 'How do I order?' : 'Hvordan bestiller jeg?'}
+                      </button>
                     </div>
                   </div>
                 )}
-                {selectedOption === 'order' && messages.length > 0 && (
+                {(selectedOption === 'order' || selectedOption === 'install_guides') && messages.length > 0 && (
                   <div className="chat-order-form">
                     <div className="chat-order-form-field">
                       <label>
@@ -465,10 +658,12 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                     </div>
                     <button
                       className="chat-order-submit-btn"
-                      onClick={handleOrderSubmit}
+                      onClick={selectedOption === 'order' ? handleOrderSubmit : handleInstallGuidesSubmit}
                       disabled={!orderEmail.trim() || !orderId.trim() || isLoading}
                     >
-                      {conversationLanguage === 'en' ? 'Check Status' : 'Sjekk status'}
+                      {selectedOption === 'order'
+                        ? (conversationLanguage === 'en' ? 'Check Status' : 'Sjekk status')
+                        : (conversationLanguage === 'en' ? 'Get videos' : 'Hent videoer')}
                     </button>
                   </div>
                 )}

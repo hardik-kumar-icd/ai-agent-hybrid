@@ -13,7 +13,8 @@ export const widgetStyles = `
 .visor-chat-widget {
   position: fixed;
   bottom: 20px;
-  right: 20px;
+  left: 20px;
+  right: auto;
   z-index: 9999;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
@@ -53,7 +54,8 @@ export const widgetStyles = `
 .chat-window {
   position: absolute;
   bottom: 80px;
-  right: 0;
+  left: 0;
+  right: auto;
   width: 380px;
   max-width: calc(100vw - 40px);
   height: 600px;
@@ -311,6 +313,43 @@ export const widgetStyles = `
   background: #f0f0f0;
   color: #333;
   border-bottom-left-radius: 4px;
+}
+
+.chat-message-assistant-bubble {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  min-width: 0;
+  border-radius: 18px;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  background: #f0f0f0;
+}
+
+.chat-message-assistant-bubble .chat-message-text--with-inline-action {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  padding-bottom: 8px;
+}
+
+.chat-message-guides-btn {
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px;
+  border: none;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #fff;
+  cursor: pointer;
+  background: linear-gradient(135deg, var(--widget-primary-color, #667eea) 0%, var(--widget-accent-color, #764ba2) 100%);
+}
+
+.chat-message-guides-btn:hover {
+  opacity: 0.95;
 }
 
 .chat-message-text strong {
@@ -655,18 +694,22 @@ export const widgetStyles = `
 
 /* Responsive */
 @media (max-width: 480px) {
+  .visor-chat-widget {
+    left: 15px;
+    right: auto;
+  }
+
   .chat-window {
     width: calc(100vw - 20px);
     height: calc(100vh - 100px);
     bottom: 70px;
-    right: 10px;
+    left: 0;
+    right: auto;
   }
 
   .chat-button {
     width: 56px;
     height: 56px;
-    bottom: 15px;
-    right: 15px;
   }
 }
 `;

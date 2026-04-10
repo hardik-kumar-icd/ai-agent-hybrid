@@ -9,6 +9,7 @@ const chatRoute = require('./routes/chatRoute');
 const fileRoute = require('./routes/fileRoute');
 const visorRoute = require('./routes/visorRoute');
 const envVerifyRoute = require('./routes/envVerifyRoute');
+const orderInstallGuidesRoute = require('./routes/orderInstallGuidesRoute');
 const { ragAgent } = require('./agents/ragAgent');
 const { deleteAllVectors } = require('./utils/embeddingService');
 
@@ -105,6 +106,9 @@ app.use('/api/ingest', ingestLimiter, fileRoute);
 
 // Visor.no AI Agent route
 app.use('/visor-chat', visorRoute);
+
+// Customer: order-based installation videos for purchased categories
+app.use('/api/order', orderInstallGuidesRoute);
 
 // Environment verification endpoint (admin only)
 app.use('/api/verify-env', requireAdminAuth, envVerifyRoute);

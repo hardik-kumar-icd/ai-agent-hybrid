@@ -283,28 +283,6 @@
   transform: translateY(0);
 }
 
-/* Guides: summary + link in message; primary CTA opens same URL in new tab */
-.chat-guides-cta {
-  margin: 8px 0 12px;
-  padding: 0 4px;
-}
-
-.chat-guides-open-tab {
-  width: 100%;
-  padding: 10px 14px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #fff;
-  background: linear-gradient(135deg, var(--widget-primary-color) 0%, var(--widget-accent-color) 100%);
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.chat-guides-open-tab:hover {
-  opacity: 0.95;
-}
-
 /* Order Form */
 .chat-order-form {
   margin: 12px 0;

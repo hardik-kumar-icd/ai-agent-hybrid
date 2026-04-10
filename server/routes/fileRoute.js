@@ -10,6 +10,115 @@ const { requireAdminAuth } = require('../middlewares/auth');
 const { logApiRequest } = require('../utils/securityLogger');
 const MAX_FILE_SIZE_MB = Number(process.env.MAX_FILE_SIZE_MB || 50);
 
+function normalizeCategoryKey(input) {
+  return String(input || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_:-]/g, '');
+}
+
+function parseLooseDelimited(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
+  if (lines.length === 0) return [];
+
+  const extractLooseLine = (line) => {
+    const urlMatch = line.match(/https?:\/\/[^\s<>"')]+/i);
+    if (!urlMatch) return null;
+    const url = urlMatch[0].trim();
+    const before = line.slice(0, urlMatch.index).trim();
+    const after = line.slice(urlMatch.index + url.length).trim();
+
+    // Try to interpret "category - title URL" or "category URL title"
+    // We'll treat the first part as category and the remainder (after url) as title when present.
+    const category = before.replace(/[-–—:]+$/g, '').trim();
+    const title = after.replace(/^[-–—:]+/g, '').trim();
+    if (!category) return null;
+    return { category, url, title };
+  };
+
+  const delimiter = lines[0].includes(';') && !lines[0].includes(',') ? ';' : ',';
+
+  const splitRow = (row) => {
+    const out = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < row.length; i++) {
+      const ch = row[i];
+      if (ch === '"') {
+        // Toggle quote state unless it's an escaped quote
+        if (inQuotes && row[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (!inQuotes && ch === delimiter) {
+        out.push(cur.trim());
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    out.push(cur.trim());
+    return out;
+  };
+
+  const header = splitRow(lines[0]).map((h) => normalizeCategoryKey(h));
+  const hasHeader = header.includes('category') || header.includes('category_id') || header.includes('video_url') || header.includes('url');
+
+  const rows = [];
+  const start = hasHeader ? 1 : 0;
+  for (let i = start; i < lines.length; i++) {
+    const cols = splitRow(lines[i]);
+    if (!cols.some(Boolean)) {
+      const loose = extractLooseLine(lines[i]);
+      if (loose) rows.push(loose);
+      continue;
+    }
+    if (hasHeader) {
+      const obj = {};
+      for (let c = 0; c < header.length; c++) obj[header[c]] = cols[c];
+      rows.push(obj);
+    } else {
+      // No header: try to interpret:
+      // - "category, url, title"
+      // - "category; url; title"
+      // - "category url title" (loose)
+      if (cols.length >= 2 && cols[0] && cols[1]) {
+        rows.push({ category: cols[0], url: cols[1], title: cols[2] });
+      } else {
+        const loose = extractLooseLine(lines[i]);
+        if (loose) rows.push(loose);
+      }
+    }
+  }
+  return rows;
+}
+
+function parseCategoryUrlBlocks(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const rows = [];
+  let currentCategory = null;
+  for (const line of lines) {
+    const t = String(line || '').trim();
+    if (!t) continue;
+    const urlMatch = t.match(/https?:\/\/[^\s<>"')]+/i);
+    if (urlMatch) {
+      if (currentCategory) {
+        rows.push({ category: currentCategory, url: urlMatch[0].trim(), title: '' });
+      }
+    } else {
+      // treat as category header
+      currentCategory = t;
+    }
+  }
+  return rows;
+}
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -72,6 +181,103 @@ router.post('/', requireAdminAuth, upload.single('file'), async (req, res) => {
 
     filePath = req.file.path;
     const sourceName = req.file.originalname || path.basename(filePath);
+
+    // Special ingestion: single mapping file for category -> install video URL(s)
+    // Filename convention: install_videos.csv / install_videos.txt
+    if (/^install_videos\.(csv|txt|text)$/i.test(sourceName)) {
+      // IMPORTANT: for mapping files we must preserve newlines.
+      // extractText() normalizes whitespace (including newlines) which breaks "Category line + URL lines" formats.
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      let rows = parseLooseDelimited(raw);
+      // Support ultra-loose "Category line + URL lines" format
+      if (!rows || rows.length === 0) {
+        rows = parseCategoryUrlBlocks(raw);
+      }
+
+      const byCategoryId = {};
+      const byCategoryKey = {};
+      let general = null;
+
+      for (const r of rows) {
+        const url = (r.video_url || r.url || r.link || '').trim();
+        const title = (r.title || r.label || '').trim();
+        const categoryIdRaw = (r.category_id || r.categoryid || '').toString().trim();
+        const categoryRaw = (r.category || r.category_key || r.categorykey || '').toString().trim();
+
+        if (!url) continue;
+
+        // General fallback row
+        if (normalizeCategoryKey(categoryRaw) === 'general' || normalizeCategoryKey(categoryIdRaw) === 'general') {
+          general = { url, title: title || 'General installation video' };
+          continue;
+        }
+
+        if (categoryIdRaw && /^\d+$/.test(categoryIdRaw)) {
+          byCategoryId[String(Number(categoryIdRaw))] = { url, title: title || `Category ${categoryIdRaw}` };
+        } else if (categoryRaw) {
+          byCategoryKey[normalizeCategoryKey(categoryRaw)] = { url, title: title || categoryRaw };
+        }
+      }
+
+      const dataDir = path.join(__dirname, '..', 'data');
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      const mappingPath = path.join(dataDir, 'installVideos.json');
+      fs.writeFileSync(mappingPath, JSON.stringify({ general, byCategoryId, byCategoryKey }, null, 2), 'utf-8');
+
+      return res.json({
+        message: 'Install video mapping saved',
+        mappingFile: 'server/data/installVideos.json',
+        counts: {
+          byCategoryId: Object.keys(byCategoryId).length,
+          byCategoryKey: Object.keys(byCategoryKey).length,
+          hasGeneral: Boolean(general?.url),
+        },
+      });
+    }
+
+    // Backwards-compatible alias: allow install_guides.txt to act as the install video mapping
+    // (Admins sometimes reuse the old name; accept it to prevent silent misconfiguration.)
+    if (/^install_guides\.(txt|text|csv)$/i.test(sourceName)) {
+      // Preserve newlines for block format
+      const raw = fs.readFileSync(filePath, 'utf-8');
+
+      const rows = parseCategoryUrlBlocks(raw);
+
+      const byCategoryId = {};
+      const byCategoryKey = {};
+      let general = null;
+
+      for (const r of rows) {
+        const url = (r.video_url || r.url || r.link || '').trim();
+        const title = (r.title || r.label || '').trim();
+        const categoryRaw = (r.category || r.category_key || r.categorykey || '').toString().trim();
+        if (!url || !categoryRaw) continue;
+
+        if (normalizeCategoryKey(categoryRaw) === 'general') {
+          // keep the first general we encounter
+          if (!general) general = { url, title: title || 'General installation video' };
+          continue;
+        }
+
+        const key = normalizeCategoryKey(categoryRaw);
+        if (key) byCategoryKey[key] = { url, title: title || categoryRaw };
+      }
+
+      const dataDir = path.join(__dirname, '..', 'data');
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      const mappingPath = path.join(dataDir, 'installVideos.json');
+      fs.writeFileSync(mappingPath, JSON.stringify({ general, byCategoryId, byCategoryKey }, null, 2), 'utf-8');
+
+      return res.json({
+        message: 'Install video mapping saved (from install_guides.* alias)',
+        mappingFile: 'server/data/installVideos.json',
+        counts: {
+          byCategoryId: 0,
+          byCategoryKey: Object.keys(byCategoryKey).length,
+          hasGeneral: Boolean(general?.url),
+        },
+      });
+    }
 
     // Step 1: Parse the file and extract text
     console.log(`Extracting text from ${sourceName}...`);

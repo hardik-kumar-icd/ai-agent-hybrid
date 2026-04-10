@@ -5,7 +5,15 @@ import './ChatMessage.css';
  * ChatMessage Component
  * Displays individual chat messages (user or assistant)
  */
-function ChatMessage({ message, role, isLoading = false }) {
+function ChatMessage({
+  message,
+  role,
+  isLoading = false,
+  guidesButton = false,
+  onGuidesClick,
+  guidesButtonLabel = 'Åpne veiledninger i ny fane',
+  videoEmbeds = null,
+}) {
   const isUser = role === 'user';
   
   if (isLoading) {
@@ -32,7 +40,45 @@ function ChatMessage({ message, role, isLoading = false }) {
             </svg>
           </div>
         )}
-        <div className="chat-message-text" dangerouslySetInnerHTML={{ __html: formatMessage(message) }}></div>
+        {!isUser && guidesButton ? (
+          <div className="chat-message-assistant-bubble">
+            <div
+              className="chat-message-text chat-message-text--with-inline-action"
+              dangerouslySetInnerHTML={{ __html: formatMessage(message) }}
+            />
+            <button
+              type="button"
+              className="chat-message-guides-btn"
+              onClick={onGuidesClick}
+            >
+              {guidesButtonLabel}
+            </button>
+          </div>
+        ) : (
+          <div className="chat-message-text">
+            <div dangerouslySetInnerHTML={{ __html: formatMessage(message) }} />
+            {!isUser && Array.isArray(videoEmbeds) && videoEmbeds.length > 0 && (
+              <div className="chat-message-video-list">
+                {videoEmbeds.map((v, idx) => (
+                  <div key={`${v.src}-${idx}`} className="chat-message-video">
+                    {v.title && <div className="chat-message-video-title">{v.title}</div>}
+                    <div className="chat-message-video-frame">
+                      <iframe
+                        src={v.src}
+                        title={v.title || 'video'}
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        sandbox="allow-scripts allow-same-origin allow-presentation"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        allowFullScreen
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {isUser && (
           <div className="chat-message-avatar">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
