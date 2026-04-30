@@ -39,5 +39,11 @@ tickets_fixed.jsonl
 visor_faqs.json
 install_videos.txt
 
+# Local-only session docs
+CLAUDE.md
+SAMJHO.md
+COMMIT_LOG.md
+START.md
+
 # IDE files
 *.code-workspace
