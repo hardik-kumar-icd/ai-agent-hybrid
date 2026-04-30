@@ -1,0 +1,17 @@
+{
+  "general": {
+    "url": "https://vimeo.com/577319295?fl=pl&fe=cm",
+    "title": "General installation video"
+  },
+  "byCategoryId": {},
+  "byCategoryKey": {
+    "rullegardiner": {
+      "url": "https://vimeo.com/400382645?fl=pl&fe=",
+      "title": "Rullegardiner"
+    },
+    "plissegardiner": {
+      "url": "https://vimeo.com/577287916?fl=pl&fe=cm",
+      "title": "Plissegardiner"
+    }
+  }
+}

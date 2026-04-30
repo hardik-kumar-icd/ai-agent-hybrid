@@ -22,7 +22,8 @@ logs/
 
 # Uploads
 server/uploads/
-server/data/
+server/data/*
+!server/data/installVideos.json
 
 # Admin build output
 server/public/
