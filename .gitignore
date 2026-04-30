@@ -39,9 +39,5 @@ tickets_fixed.jsonl
 visor_faqs.json
 install_videos.txt
 
-# Local-only docs (never push to GitHub)
-COMMIT_LOG.md
-CLAUDE.md
-SAMJHO.md
-START.md
+# IDE files
 *.code-workspace
