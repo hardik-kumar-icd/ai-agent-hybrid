@@ -162,6 +162,61 @@
   border: 0;
 }
 
+.chat-message-product-links {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-message-product-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-message-product-item-name {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  line-height: 1.4;
+}
+
+.chat-message-product-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, var(--widget-primary-color, #667eea) 0%, var(--widget-accent-color, #764ba2) 100%);
+  color: #fff;
+  border-radius: 10px;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  transition: opacity 0.2s;
+}
+
+.chat-message-product-btn:hover {
+  opacity: 0.9;
+}
+
+.chat-message-product-name {
+  flex: 1;
+}
+
+.chat-message-product-item-sku {
+  margin: 0;
+  font-size: 11px;
+  color: #888;
+  font-weight: 400;
+}
+
+.chat-message-product-arrow {
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
 .typing-indicator {
   display: inline-flex;
   gap: 4px;

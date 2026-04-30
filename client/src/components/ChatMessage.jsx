@@ -13,6 +13,7 @@ function ChatMessage({
   onGuidesClick,
   guidesButtonLabel = 'Åpne veiledninger i ny fane',
   videoEmbeds = null,
+  productLinks = null,
 }) {
   const isUser = role === 'user';
   
@@ -57,22 +58,21 @@ function ChatMessage({
         ) : (
           <div className="chat-message-text">
             <div dangerouslySetInnerHTML={{ __html: formatMessage(message) }} />
-            {!isUser && Array.isArray(videoEmbeds) && videoEmbeds.length > 0 && (
-              <div className="chat-message-video-list">
-                {videoEmbeds.map((v, idx) => (
-                  <div key={`${v.src}-${idx}`} className="chat-message-video">
-                    {v.title && <div className="chat-message-video-title">{v.title}</div>}
-                    <div className="chat-message-video-frame">
-                      <iframe
-                        src={v.src}
-                        title={v.title || 'video'}
-                        loading="lazy"
-                        referrerPolicy="no-referrer"
-                        sandbox="allow-scripts allow-same-origin allow-presentation"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                        allowFullScreen
-                      />
-                    </div>
+            {!isUser && Array.isArray(productLinks) && productLinks.length > 0 && (
+              <div className="chat-message-product-links">
+                {productLinks.map((p, idx) => (
+                  <div key={idx} className="chat-message-product-item">
+                    <p className="chat-message-product-item-name">{p.name}</p>
+                    {p.sku && <p className="chat-message-product-item-sku">SKU: {p.sku}</p>}
+                    <a
+                      href={p.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="chat-message-product-btn"
+                    >
+                      <span className="chat-message-product-name">{p.buttonLabel || 'Click to view page'}</span>
+                      <span className="chat-message-product-arrow">→</span>
+                    </a>
                   </div>
                 ))}
               </div>

@@ -157,6 +157,20 @@ function extractCategoryIdsFromProductPayload(data) {
   return [];
 }
 
+function extractUrlKeyFromProductPayload(data) {
+  if (!data) return null;
+  const attrs = data.custom_attributes;
+  if (!Array.isArray(attrs)) return null;
+  const entry = attrs.find((a) => a.attribute_code === 'url_key');
+  return entry?.value || null;
+}
+
+function buildProductUrl(urlKey) {
+  if (!urlKey) return null;
+  const base = (process.env.MAGENTO_API_URL || '').replace(/\/rest\/V1\/?$/, '');
+  return `${base}/${urlKey}`;
+}
+
 async function fetchMagentoCategoryName(categoryId, headers) {
   const { endpoints } = platformConfig;
   const url = `${endpoints.magento}/categories/${encodeURIComponent(String(categoryId).trim())}`;
@@ -186,6 +200,7 @@ async function resolveProductCategoriesDebug({ productId, sku, headers }) {
     try {
       const resp = await axios.get(url, { headers: h });
       const ids = extractCategoryIdsFromProductPayload(resp.data).filter((n) => Number.isFinite(n));
+      const urlKey = extractUrlKeyFromProductPayload(resp.data);
       steps.push({
         step: 'GET /products/{sku}',
         sku: String(sku).trim(),
@@ -193,7 +208,7 @@ async function resolveProductCategoriesDebug({ productId, sku, headers }) {
         status: resp.status,
         category_ids: ids,
       });
-      if (ids.length) return { categoryIds: ids, steps };
+      if (ids.length) return { categoryIds: ids, urlKey, steps };
     } catch (err) {
       steps.push({
         step: 'GET /products/{sku}',
@@ -214,6 +229,7 @@ async function resolveProductCategoriesDebug({ productId, sku, headers }) {
       const resp = await axios.get(url, { headers: h });
       const product = resp.data?.items?.[0];
       const ids = extractCategoryIdsFromProductPayload(product).filter((n) => Number.isFinite(n));
+      const urlKey = extractUrlKeyFromProductPayload(product);
       steps.push({
         step: 'GET /products?searchCriteria[entity_id]',
         product_id: productId,
@@ -222,7 +238,7 @@ async function resolveProductCategoriesDebug({ productId, sku, headers }) {
         category_ids: ids,
         found_product: Boolean(product),
       });
-      if (ids.length) return { categoryIds: ids, steps };
+      if (ids.length) return { categoryIds: ids, urlKey, steps };
     } catch (err) {
       steps.push({
         step: 'GET /products?searchCriteria[entity_id]',
@@ -233,7 +249,7 @@ async function resolveProductCategoriesDebug({ productId, sku, headers }) {
     }
   }
 
-  return { categoryIds: [], steps };
+  return { categoryIds: [], urlKey: null, steps };
 }
 
 router.post('/install-guides', async (req, res) => {
@@ -292,11 +308,12 @@ router.post('/install-guides', async (req, res) => {
     };
 
     for (const item of orderResult.items || []) {
-      const { categoryIds, steps: productSteps } = await resolveProductCategoriesDebug({
+      const { categoryIds, urlKey, steps: productSteps } = await resolveProductCategoriesDebug({
         productId: item.product_id,
         sku: item.sku,
         headers,
       });
+      const productUrl = buildProductUrl(urlKey);
       if (productStepsHadCatalog401(productSteps)) catalogApi401 = true;
 
       const categoryDetails = [];
@@ -360,6 +377,7 @@ router.post('/install-guides', async (req, res) => {
             sku: item.sku || null,
             name: item.name || null,
             product_id: item.product_id || null,
+            product_url: productUrl,
           },
           matched: {
             by: picked.matchedBy || 'unknown',

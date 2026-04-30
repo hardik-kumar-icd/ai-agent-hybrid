@@ -312,37 +312,27 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
 
       const data = await response.json();
 
-      const lines = (data.videos || [])
+      const productLinks = (data.videos || [])
         .map((v) => {
-          const title = (v.title || '').trim();
-          const url = (v.url || '').trim();
-          if (!url) return null;
-          const safeTitle = title || (conversationLanguage === 'en' ? 'Open video' : 'Åpne video');
-          return `- [${safeTitle}](${url})`;
+          const name = (v.product?.name || v.title || '').trim();
+          const sku = (v.product?.sku || '').trim();
+          const productUrl = (v.product?.product_url || '').trim();
+          if (!productUrl) return null;
+          const buttonLabel = conversationLanguage === 'en' ? 'Click to view page' : 'Klikk for å se siden';
+          return { name, sku, url: productUrl + '#howto', buttonLabel };
         })
         .filter(Boolean);
 
-      const embeds = (data.videos || [])
-        .map((v) => {
-          const url = (v.url || '').trim();
-          const title = (v.title || '').trim();
-          const src = url ? toSafeEmbedSrc(url) : null;
-          if (!src) return null;
-          return { src, title: title || (conversationLanguage === 'en' ? 'Video' : 'Video') };
-        })
-        .filter(Boolean)
-        .slice(0, 3);
-
       const assistantText =
-        lines.length > 0
+        productLinks.length > 0
           ? (conversationLanguage === 'en'
-              ? `Here are the installation videos I found:\n${lines.join('\n')}`
-              : `Her er monteringsvideoene jeg fant:\n${lines.join('\n')}`)
+              ? 'Here are your ordered products:'
+              : 'Her er produktene i ordren din:')
           : (conversationLanguage === 'en'
-              ? 'I found your order, but I could not match any category videos yet. Showing the general installation video instead.'
-              : 'Jeg fant ordren, men klarte ikke å matche noen kategori-videoer ennå. Viser den generelle monteringsvideoen i stedet.');
+              ? 'I found your order, but could not find product page links.'
+              : 'Jeg fant ordren, men kunne ikke finne produktsidelenker.');
 
-      setMessages(prev => [...prev, { role: 'assistant', content: assistantText, videoEmbeds: embeds }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: assistantText, productLinks }]);
 
       setOrderEmail('');
       setOrderId('');
@@ -576,6 +566,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                             : 'Åpne veiledninger i ny fane'
                         }
                         videoEmbeds={msg.videoEmbeds || null}
+                        productLinks={msg.productLinks || null}
                       />
                     </div>
                   );
@@ -663,7 +654,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                     >
                       {selectedOption === 'order'
                         ? (conversationLanguage === 'en' ? 'Check Status' : 'Sjekk status')
-                        : (conversationLanguage === 'en' ? 'Get videos' : 'Hent videoer')}
+                        : (conversationLanguage === 'en' ? 'View Installation Guide' : 'Se monteringsveiledning')}
                     </button>
                   </div>
                 )}
