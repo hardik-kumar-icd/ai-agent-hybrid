@@ -45,11 +45,8 @@ SAMJHO.md
 COMMIT_LOG.md
 START.md
 GIT_GUIDE.md
-<<<<<<< HEAD
-=======
 SETUP_NEW_MACHINE.md
 CHANGELOG.md
->>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
 
 # IDE files
 *.code-workspace
