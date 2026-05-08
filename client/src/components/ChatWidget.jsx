@@ -14,7 +14,11 @@ const GUIDES_PAGE_URL = 'https://test.visor.no/how-to-install/';
 const ENGLISH_PLACEHOLDER = 'Type your message here...';
 const NORWEGIAN_PLACEHOLDER = 'Skriv din melding her...';
 const ENGLISH_DETECT_REGEX = /\b(what|how|order|status|the|is|can|do|does|please|help|want|need|hello|hi|when|where|which|why|tell|me|about)\b/i;
+<<<<<<< HEAD
 const ORDER_DETECT_REGEX = /\b(order|ordre|ordrestatus|order status|where is my order|hvor er min ordre|track order|spor ordre|order number|ordrenummer|order id|orderid)\b/i;
+=======
+const ORDER_DETECT_REGEX = /\b(ordrestatus|order status|where is my order|hvor er min ordre|track order|spor ordre|order number|ordrenummer|order id|orderid)\b/i;
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
 
 function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToken }) {
   const isAdmin = mode === 'admin';
@@ -213,7 +217,11 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
       setMessages(prev => [...prev, { role: 'assistant', content: prompt }]);
     } else if (option === 'faqs') {
       setMessages(prev => [...prev, { role: 'user', content: 'FAQs' }]);
+<<<<<<< HEAD
       const promptMessage = conversationLanguage === 'en' 
+=======
+      const promptMessage = conversationLanguage === 'en'
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
         ? 'Enter your query'
         : 'Skriv inn spørsmålet ditt';
       setMessages(prev => [...prev, { role: 'assistant', content: promptMessage }]);
@@ -326,6 +334,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
       const assistantText =
         productLinks.length > 0
           ? (conversationLanguage === 'en'
+<<<<<<< HEAD
               ? 'Here are your ordered products:'
               : 'Her er produktene i ordren din:')
           : (conversationLanguage === 'en'
@@ -333,6 +342,24 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
               : 'Jeg fant ordren, men kunne ikke finne produktsidelenker.');
 
       setMessages(prev => [...prev, { role: 'assistant', content: assistantText, productLinks }]);
+=======
+            ? 'Here are your ordered products:'
+            : 'Her er produktene i ordren din:')
+          : (conversationLanguage === 'en'
+            ? 'I found your order, but could not find product page links.'
+            : 'Jeg fant ordren, men kunne ikke finne produktsidelenker.');
+
+      const followUpText =
+        conversationLanguage === 'en'
+          ? 'How can I help you further?'
+          : 'Hvordan kan jeg hjelpe deg videre?';
+
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: assistantText, productLinks },
+        { role: 'assistant', content: followUpText }
+      ]);
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
 
       setOrderEmail('');
       setOrderId('');
@@ -356,8 +383,13 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
 
   const handleOrderSubmit = async () => {
     if (!orderEmail.trim() || !orderId.trim()) {
+<<<<<<< HEAD
       setError(conversationLanguage === 'en' 
         ? 'Please fill in both email and order ID' 
+=======
+      setError(conversationLanguage === 'en'
+        ? 'Please fill in both email and order ID'
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
         : 'Vennligst fyll inn både e-post og ordrenummer');
       return;
     }
@@ -367,7 +399,11 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     const orderMessage = conversationLanguage === 'en'
       ? `Check order status for Order ID: ${orderIdValue}, Email: ${emailValue}`
       : `Sjekk ordrestatus for ordrenummer: ${orderIdValue}, E-post: ${emailValue}`;
+<<<<<<< HEAD
     
+=======
+
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
     setMessages(prev => [...prev, { role: 'user', content: orderMessage }]);
     setIsLoading(true);
     setError(null);
@@ -404,7 +440,11 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
       setOrderEmail('');
       setOrderId('');
       setSelectedOption(null); // Clear order form after submission
+<<<<<<< HEAD
       
+=======
+
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
       // Delay showing options to let user read the response first
       setTimeout(() => {
         setShowOptionsAgain(true);
@@ -459,7 +499,11 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                 </div>
                 <button className="chat-close-button" onClick={handleToggle} aria-label="Close admin panel">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<<<<<<< HEAD
                     <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/>
+=======
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor" />
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                   </svg>
                 </button>
               </div>
@@ -472,7 +516,11 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                 <div className="chat-header-content">
                   <div className="chat-header-avatar">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<<<<<<< HEAD
                       <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" fill="currentColor"/>
+=======
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" fill="currentColor" />
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                     </svg>
                   </div>
                   <div className="chat-header-text">
@@ -483,18 +531,30 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                   <div className="chat-header-actions">
                     <button type="button" className="chat-header-icon-btn" onClick={handleDownloadTranscript} title="Download transcript" aria-label="Download transcript">
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<<<<<<< HEAD
                         <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/>
+=======
+                        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor" />
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                       </svg>
                     </button>
                     <button type="button" className="chat-header-icon-btn" onClick={handleRestartChat} title="Restart chat" aria-label="Restart chat">
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<<<<<<< HEAD
                         <path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor"/>
+=======
+                        <path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" fill="currentColor" />
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                       </svg>
                     </button>
                   </div>
                   <button className="chat-close-button" onClick={handleToggle} aria-label="Close chat">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<<<<<<< HEAD
                       <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/>
+=======
+                      <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor" />
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                     </svg>
                   </button>
                 </div>
@@ -507,6 +567,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                     {!selectedOption && !showOptionsAgain && (
                       <div className="chat-options-container">
                         <p className="chat-options-prompt">
+<<<<<<< HEAD
                           {conversationLanguage === 'en' 
                             ? 'Please select an option:' 
                             : 'Vennligst velg et alternativ:'}
@@ -514,20 +575,39 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                         <div className="chat-options-buttons">
                           <button 
                             className="chat-option-btn" 
+=======
+                          {conversationLanguage === 'en'
+                            ? 'Please select an option:'
+                            : 'Vennligst velg et alternativ:'}
+                        </p>
+                        <div className="chat-options-buttons">
+                          <button
+                            className="chat-option-btn"
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                             onClick={() => handleOptionSelect('faqs')}
                           >
                             {conversationLanguage === 'en'
                               ? 'FAQs, frequently asked questions and answers'
                               : 'FAQs, stilte spørsmål og svar'}
                           </button>
+<<<<<<< HEAD
                           <button 
                             className="chat-option-btn" 
+=======
+                          <button
+                            className="chat-option-btn"
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                             onClick={() => handleOptionSelect('product')}
                           >
                             {conversationLanguage === 'en' ? 'Product Info' : 'Produktinfo'}
                           </button>
+<<<<<<< HEAD
                           <button 
                             className="chat-option-btn" 
+=======
+                          <button
+                            className="chat-option-btn"
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                             onClick={() => handleOptionSelect('order')}
                           >
                             {conversationLanguage === 'en' ? 'Order Status' : 'Ordrestatus'}
@@ -574,6 +654,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                 {showOptionsAgain && !selectedOption && (
                   <div className="chat-options-container compact">
                     <p className="chat-options-prompt">
+<<<<<<< HEAD
                       {conversationLanguage === 'en' 
                         ? 'Please select an option:' 
                         : 'Vennligst velg et alternativ:'}
@@ -581,20 +662,39 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                     <div className="chat-options-buttons">
                       <button 
                         className="chat-option-btn" 
+=======
+                      {conversationLanguage === 'en'
+                        ? 'Please select an option:'
+                        : 'Vennligst velg et alternativ:'}
+                    </p>
+                    <div className="chat-options-buttons">
+                      <button
+                        className="chat-option-btn"
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                         onClick={() => handleOptionSelect('faqs')}
                       >
                         {conversationLanguage === 'en'
                           ? 'FAQs, frequently asked questions and answers'
                           : 'FAQs, stilte spørsmål og svar'}
                       </button>
+<<<<<<< HEAD
                       <button 
                         className="chat-option-btn" 
+=======
+                      <button
+                        className="chat-option-btn"
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                         onClick={() => handleOptionSelect('product')}
                       >
                         {conversationLanguage === 'en' ? 'Product Info' : 'Produktinfo'}
                       </button>
+<<<<<<< HEAD
                       <button 
                         className="chat-option-btn" 
+=======
+                      <button
+                        className="chat-option-btn"
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                         onClick={() => handleOptionSelect('order')}
                       >
                         {conversationLanguage === 'en' ? 'Order Status' : 'Ordrestatus'}
@@ -685,7 +785,11 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                   aria-label="Send message"
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<<<<<<< HEAD
                     <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"/>
+=======
+                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor" />
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                   </svg>
                 </button>
               </div>
@@ -703,11 +807,19 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
       >
         {isOpen ? (
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<<<<<<< HEAD
             <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/>
           </svg>
         ) : (
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" fill="currentColor"/>
+=======
+            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor" />
+          </svg>
+        ) : (
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" fill="currentColor" />
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
           </svg>
         )}
       </button>

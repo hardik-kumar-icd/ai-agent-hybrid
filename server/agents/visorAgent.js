@@ -189,6 +189,60 @@ function ticketChunkContainsQuery(chunkText, userMessage) {
 }
 
 /**
+<<<<<<< HEAD
+=======
+ * Detect sensitive policy questions where we must avoid ticket-based inference.
+ * These answers should come from structured KB context only.
+ */
+function isSensitivePolicyQuery(userMessage) {
+  if (!userMessage || typeof userMessage !== 'string') return false;
+  const q = userMessage.toLowerCase();
+  const markers = [
+    'how do i order', 'place an order', 'order process', 'bestille', 'hvordan bestiller',
+    'betaling', 'payment', 'deposit', 'upfront', 'advance payment', 'partial invoice',
+    'faktura', 'forhåndsbetaling', 'delbetaling'
+  ];
+  return markers.some((m) => q.includes(m));
+}
+
+function isLikelyNorwegian(text) {
+  if (!text || typeof text !== 'string') return false;
+  const t = text.toLowerCase();
+  return /\b(hvordan|bestiller|betaling|innbetaling|ordre|bestilling|hva|hei|og|ikke|kundeservice)\b/.test(t);
+}
+
+/**
+ * Removes unsupported payment-policy claims for order/payment flow questions.
+ * This guards against stale KB/ticket snippets (e.g. specific deposit percentages).
+ */
+function sanitizeUnsupportedPaymentPolicy(answerText, userMessage) {
+  if (!answerText || typeof answerText !== 'string') return answerText;
+  if (!isSensitivePolicyQuery(userMessage)) return answerText;
+
+  const lines = answerText.split('\n');
+  let removed = false;
+  const filtered = lines.filter((line) => {
+    const hasPercent = /\b\d{1,3}\s*%\b/.test(line);
+    const hasPaymentPolicyTerms = /(payment|deposit|upfront|partial\s*invoice|invoice|faktura|innbetaling|forhåndsbetaling|delbetaling|betalingsvilkår|production|produksjon)/i.test(line);
+    if (hasPercent && hasPaymentPolicyTerms) {
+      removed = true;
+      return false;
+    }
+    return true;
+  });
+
+  if (!removed) return answerText;
+
+  const fallback = isLikelyNorwegian(userMessage)
+    ? 'Jeg har ikke bekreftede detaljer om betalingsvilkår i kunnskapsbasen. Kontakt kundeservice for korrekt betalingsinformasjon.'
+    : 'I do not have confirmed payment-policy details in the knowledge base. Please contact customer service for accurate payment terms.';
+
+  const cleaned = filtered.join('\n').trim();
+  return cleaned ? `${cleaned}\n\n${fallback}` : fallback;
+}
+
+/**
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
  * Decide if RAG context is substantive (real product/FAQ answer) or only generic contact fallback.
  * When the KB returns only "Fant ikke svar" / contact info, we treat it as "no data" and search tickets.
  */
@@ -243,6 +297,11 @@ CORE KNOWLEDGE (RAG) - CRITICAL RULES:
 - You have access to a knowledge base containing product information, FAQs, installation guides, support tickets, and customer service information. ALWAYS use the rag_search tool FIRST when users ask about products, FAQs, payment methods, delivery, installation, measurements, offers, shipping, or any general questions about Visor.no services.
 - STRICT ADHERENCE: If the rag_search tool returns "NO_KNOWLEDGE_BASE_DATA" or "No relevant information found", you MUST respond with: "I don't have that information in my knowledge base yet. Please contact customer service for assistance." DO NOT make up information. DO NOT use training data or general knowledge. ONLY use information from the rag_search tool results.
 - FAQ RESPONSES - ABSOLUTE PRIORITY: When rag_search returns FAQ content (text containing "Question:" and "Answer:" or "Category:"), you MUST use that exact FAQ content as the basis for your response. DO NOT replace FAQ answers with generic advice. If the FAQ mentions specific measurements (like "5mm fratrekk", "systembredde", "15-25mm"), specific products (like "rullegardin", "lamellegardin"), or specific resources (like "Hvordan ta mål videoer"), you MUST include those exact details. Paraphrase only for clarity, but preserve all specific technical details, measurements, and instructions.
+<<<<<<< HEAD
+=======
+- SENSITIVE POLICY RULE: For ordering flow and payment-policy questions (e.g. "How do I order?", "Hvordan bestiller jeg?", deposits, upfront/partial payments), provide ONLY what is explicitly present in rag_search results. Never invent or assume percentages, deposit requirements, or invoice policies.
+- Never invent policy numbers or payment percentages. If the examples do not explicitly provide a payment policy, say you do not have that detail and direct the user to customer service.;
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
 - PRODUCT INFORMATION & FAQs: When users ask about products, FAQs, payment methods (like Vipps), delivery, installation, measurements, or any service-related questions, ALWAYS call rag_search tool FIRST. Only share information that comes from the rag_search tool results. Product names, prices, SKUs, descriptions, FAQ answers, and specifications from the knowledge base are public information and should be shared.
 - SEMANTIC UNDERSTANDING: Use your semantic understanding to match field names regardless of format. For example, if a user asks about "regular-price" but the document has "regular_price", understand they refer to the same field. Similarly, handle variations like "sale_price" vs "sale-price" vs "sale price", "product_name" vs "productName" vs "product name", etc. Extract and provide the information based on semantic meaning, not exact string matching.
 - ANY JSON STRUCTURE: Ingested content can be products, FAQs, docs, or anything—there is no fixed schema. The knowledge base may use any structure (nested objects, different key names, different languages). Delivery/lead time might appear as production_lead_time, delivery_time, leveringstid, shipping.days, etc. FAQ or fabric samples might be in faq[], questions, support_info, or any other path. Use your intelligence to find and use the relevant information by meaning (e.g. "delivery time" → any field about shipping/lead time; "fabric samples" → any text about samples/tekstilprøver/prøver), not by expecting fixed field names.
@@ -305,8 +364,17 @@ RESPONSE FORMATTING & CONCISENESS - CRITICAL:
 - DO NOT include markdown image syntax (![Image](url)) - images are not rendered in chat, skip image references entirely.
 - Use **bold text** for key product names and measurements.
 - Use bullet points for lists and step-by-step instructions.
+<<<<<<< HEAD
 - Keep responses concise and relevant to the question asked.
 - Format product information clearly but concisely.
+=======
+- FORMAT CLEARLY: Format product information clearly but concisely.
+
+CONVERSATIONAL ENGAGEMENT - CRITICAL:
+- NEVER end the conversation abruptly after answering.
+- ALWAYS end your response with a follow-up question to guide the customer to a solution or ask "How can I help you further?" (in the appropriate language).
+- For questions about products, textiles, or installation, encourage the customer to ask for more details or offer step-by-step guidance.
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
 
 LINKS & APPEARANCE:
 - When the retrieved context contains a URL for a product or FAQ (e.g. additional_info.url, url, link, image_url), include it as a markdown link: [Product name or "More info"](exact_url_from_context). Use ONLY URLs that appear in the retrieved context; do NOT invent or guess URLs.
@@ -471,18 +539,31 @@ Be helpful, professional, and expert-led.`;
             case 'rag_search': {
               const ragResult = await ragTool(args);
               const kbHasSubstantive = hasSubstantiveKbContext(ragResult);
+<<<<<<< HEAD
+=======
+              const sensitivePolicyQuery = isSensitivePolicyQuery(message);
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
 
               // 1) KB has no real data (empty or only generic \"Fant ikke svar\" contact FAQ)
               //    → prefer ticket-based answer if available.
               if (!kbHasSubstantive) {
+<<<<<<< HEAD
                 const ticketAnswer = await answerFromTickets(message);
                 if (ticketAnswer && ticketAnswer.trim().length > 0) {
                   return ticketAnswer;
+=======
+                if (!sensitivePolicyQuery) {
+                  const ticketAnswer = await answerFromTickets(message);
+                  if (ticketAnswer && ticketAnswer.trim().length > 0) {
+                    return sanitizeUnsupportedPaymentPolicy(ticketAnswer, message);
+                  }
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                 }
               } else {
                 // 2) KB has substantive data, but we might still have a strong ticket match:
                 //    - high semantic score (>= 0.65; 0.65 allows cross-lingual e.g. EN query vs NO ticket), OR
                 //    - user query is a substring of a ticket chunk (e.g. they copied from a ticket).
+<<<<<<< HEAD
                 try {
                   const ticketQuery = await expandQueryForSearch(message);
                   const topTickets = await searchTickets(ticketQuery, 5);
@@ -497,6 +578,24 @@ Be helpful, professional, and expert-led.`;
                   }
                 } catch (err) {
                   // Fall back to KB result on ticket search failure
+=======
+                if (!sensitivePolicyQuery) {
+                  try {
+                    const ticketQuery = await expandQueryForSearch(message);
+                    const topTickets = await searchTickets(ticketQuery, 5);
+                    const topScore = topTickets[0] && typeof topTickets[0].score === 'number' ? topTickets[0].score : null;
+                    const strongScore = topScore !== null && topScore >= 0.65;
+                    const substringMatch = topTickets.some((doc) => ticketChunkContainsQuery(doc.text, message));
+                    if (strongScore || substringMatch) {
+                      const ticketAnswer = await answerFromTickets(message);
+                      if (ticketAnswer && ticketAnswer.trim().length > 0) {
+                        return sanitizeUnsupportedPaymentPolicy(ticketAnswer, message);
+                      }
+                    }
+                  } catch (err) {
+                    // Fall back to KB result on ticket search failure
+                  }
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
                 }
               }
 
@@ -577,7 +676,12 @@ Be helpful, professional, and expert-led.`;
     }
 
     // Return the final response
+<<<<<<< HEAD
     return response.content || 'Jeg beklager, jeg kunne ikke generere et svar.';
+=======
+    const finalText = response.content || 'Jeg beklager, jeg kunne ikke generere et svar.';
+    return sanitizeUnsupportedPaymentPolicy(finalText, message);
+>>>>>>> 7b856bb (Add Hvordan kan jeg hjelpe deg videre?)
   } catch (error) {
     console.error('Error processing Visor message:', error);
     throw new Error(`Failed to process message: ${error.message}`);
