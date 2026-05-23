@@ -8,6 +8,7 @@ require('dotenv').config();
 const chatRoute = require('./routes/chatRoute');
 const fileRoute = require('./routes/fileRoute');
 const visorRoute = require('./routes/visorRoute');
+const visorChatStreamRoute = require('./routes/visorChatStreamRoute');
 const envVerifyRoute = require('./routes/envVerifyRoute');
 const orderInstallGuidesRoute = require('./routes/orderInstallGuidesRoute');
 const { ragAgent } = require('./agents/ragAgent');
@@ -106,6 +107,7 @@ app.use('/api/ingest', ingestLimiter, fileRoute);
 
 // Visor.no AI Agent route
 app.use('/visor-chat', visorRoute);
+app.use('/visor-chat/stream', visorChatStreamRoute);
 
 // Customer: order-based installation videos for purchased categories
 app.use('/api/order', orderInstallGuidesRoute);

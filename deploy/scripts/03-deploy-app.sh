@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 03-deploy-app.sh
-# Install dependencies, build client, start (or restart) PM2 process.
-# Used for both first-time deploy and subsequent updates.
+# 03-deploy-app.sh  (updated for latency PR)
+#
+# Changes vs. previous version:
+#  1. Client uses `npm ci` (NOT --omit=dev) so Vite is available for the
+#     widget build (Vite is a devDependency).
+#  2. Adds `npm run build:widget` step so client/dist/widget.bundle.umd.js
+#     is actually produced.
+#  3. Verifies the widget bundle exists before reloading PM2.
+#
+# Used for both first-time deploy and subsequent updates. Idempotent.
 # ============================================================================
 set -euo pipefail
 
@@ -35,12 +42,30 @@ cd "$APP_DIR/server"
 npm ci --omit=dev
 ok "Server deps installed"
 
-# ---------- Client build ----------
-log "Installing client dependencies and building..."
+# ---------- Client deps (INCLUDING devDependencies for Vite) ----------
+log "Installing client dependencies (including devDependencies for build tools)..."
 cd "$APP_DIR/client"
 npm ci
+ok "Client deps installed"
+
+# ---------- Client builds ----------
+log "Building CRA app (client/build/)..."
 npm run build
-ok "Client built ($(du -sh build | cut -f1))"
+ok "CRA app built ($(du -sh build 2>/dev/null | cut -f1))"
+
+log "Building widget bundle (client/dist/widget.bundle.umd.js)..."
+npm run build:widget
+ok "Widget bundle built"
+
+# Sanity check: did the bundle actually appear?
+if [[ ! -f "$APP_DIR/client/dist/widget.bundle.umd.js" ]]; then
+  echo "❌ Widget bundle build did not produce widget.bundle.umd.js"
+  echo "   Check the output of 'npm run build:widget' above for errors."
+  exit 1
+fi
+
+WIDGET_SIZE=$(du -h "$APP_DIR/client/dist/widget.bundle.umd.js" | cut -f1)
+ok "Widget bundle verified: $WIDGET_SIZE"
 
 # ---------- PM2 start or restart ----------
 cd "$APP_DIR"
@@ -66,8 +91,12 @@ else
   exit 1
 fi
 
+# ---------- Optional: verify streaming endpoint ----------
+if curl -sf -X GET http://localhost:5000/visor-chat/stream >/dev/null 2>&1; then
+  ok "Streaming endpoint registered"
+fi
+
 echo
 echo "Next steps:"
-echo "  - sudo bash deploy/scripts/04-setup-nginx.sh"
-echo "  - sudo bash deploy/scripts/05-setup-ssl.sh"
-echo "  - sudo bash deploy/scripts/06-setup-backups.sh"
+echo "  - sudo bash deploy/scripts/04-setup-nginx.sh   (re-run if nginx config changed)"
+echo "  - sudo systemctl reload nginx                  (apply nginx changes)"
