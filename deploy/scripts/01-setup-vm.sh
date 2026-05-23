@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 01-setup-vm.sh
-# Install system dependencies: Node 20, PM2, Nginx, certbot, UFW firewall.
+# 01-setup-vm.sh  (updated for latency PR)
+#
+# Changes vs. previous version:
+#  1. UFW uses raw ports (22/80/443) instead of the 'Nginx Full' named profile.
+#     Reason: 'Nginx Full' only exists after Nginx is installed, so calling it
+#     before Nginx installation fails. Raw ports work regardless.
+#  2. Configures systemd-resolved to use public DNS (8.8.8.8, 1.1.1.1) as
+#     upstream. Avoids the AWS VPC resolver caching issue we hit during
+#     initial deploy (resolver took ~1h to pick up agent.visor.no).
+#
 # Idempotent — safe to re-run.
 # ============================================================================
 set -euo pipefail
@@ -34,18 +42,34 @@ apt-get install -y \
   wget \
   unzip \
   htop \
+  dnsutils \
   ca-certificates \
   gnupg \
   lsb-release
 ok "Base packages installed"
 
-# ---------- UFW firewall ----------
+# ---------- DNS resolver (avoid AWS VPC caching issues) ----------
+log "Configuring systemd-resolved to use public DNS (Google + Cloudflare)..."
+mkdir -p /etc/systemd/resolved.conf.d
+cat > /etc/systemd/resolved.conf.d/public-dns.conf <<EOF
+[Resolve]
+DNS=8.8.8.8 1.1.1.1
+FallbackDNS=8.8.4.4 1.0.0.1
+DNSStubListener=yes
+EOF
+systemctl restart systemd-resolved
+sleep 2
+resolvectl flush-caches || true
+ok "Public DNS upstream configured (saves you ~1 hour of cache lag for new domains)"
+
+# ---------- UFW firewall (raw ports) ----------
 log "Configuring UFW firewall..."
 ufw --force reset >/dev/null
 ufw default deny incoming >/dev/null
 ufw default allow outgoing >/dev/null
-ufw allow OpenSSH >/dev/null
-ufw allow 'Nginx Full' >/dev/null
+ufw allow 22/tcp >/dev/null      # SSH
+ufw allow 80/tcp >/dev/null      # HTTP
+ufw allow 443/tcp >/dev/null     # HTTPS
 ufw --force enable >/dev/null
 ok "UFW enabled (22, 80, 443 only)"
 

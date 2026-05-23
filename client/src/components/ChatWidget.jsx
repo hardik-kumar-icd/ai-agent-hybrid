@@ -16,6 +16,88 @@ const NORWEGIAN_PLACEHOLDER = 'Skriv din melding her...';
 const ENGLISH_DETECT_REGEX = /\b(what|how|order|status|the|is|can|do|does|please|help|want|need|hello|hi|when|where|which|why|tell|me|about)\b/i;
 const ORDER_DETECT_REGEX = /\b(ordrestatus|order status|where is my order|hvor er min ordre|track order|spor ordre|order number|ordrenummer|order id|orderid)\b/i;
 
+/**
+ * Stream a chat response via Server-Sent Events.
+ * Throws on any error so the caller can fall back to /visor-chat.
+ *
+ * @param {string} apiBaseUrl - e.g. https://agent.visor.no
+ * @param {object} payload - { message, conversationId, email?, order_id? }
+ * @param {string} conversationId
+ * @param {(token: string) => void} onToken - called for each streamed token
+ * @returns {Promise<{messageId: string|null, fullText: string}>}
+ */
+async function streamChat(apiBaseUrl, payload, conversationId, onToken) {
+  const response = await fetch(`${apiBaseUrl}/visor-chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+      'X-Conversation-Id': conversationId,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const err = new Error(`Stream failed: ${response.status}`);
+    err.status = response.status;
+    throw err;
+  }
+
+  // Some proxies don't pass SSE through correctly. Fall back if so.
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('text/event-stream')) {
+    throw new Error('Server did not respond with text/event-stream');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullText = '';
+  let messageId = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE events are separated by blank lines (\n\n)
+    let idx;
+    while ((idx = buffer.indexOf('\n\n')) >= 0) {
+      const rawEvent = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+
+      const dataLine = rawEvent
+        .split('\n')
+        .find((line) => line.startsWith('data:'));
+      if (!dataLine) continue;
+
+      const payloadStr = dataLine.slice(5).trim();
+      if (!payloadStr) continue;
+
+      let evt;
+      try {
+        evt = JSON.parse(payloadStr);
+      } catch (_) {
+        continue;
+      }
+
+      if (evt.type === 'meta') {
+        messageId = evt.messageId;
+      } else if (evt.type === 'token') {
+        fullText += evt.content || '';
+        onToken(evt.content || '');
+      } else if (evt.type === 'done') {
+        fullText = evt.content || fullText;
+        messageId = evt.messageId || messageId;
+      } else if (evt.type === 'error') {
+        throw new Error(evt.message || 'Server streaming error');
+      }
+    }
+  }
+
+  return { messageId, fullText };
+}
+
 function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToken }) {
   const isAdmin = mode === 'admin';
   const [isOpen, setIsOpen] = useState(false);
@@ -134,32 +216,80 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     setError(null);
 
     try {
-      const apiBaseUrl = baseUrl || 'https://sinkerless-sententially-abrielle.ngrok-free.dev';
-      const response = await fetch(`${apiBaseUrl}/visor-chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Conversation-Id': conversationId
-        },
-        body: JSON.stringify({
-          message: message,
-          conversationId: conversationId
-        })
-      });
+      const apiBaseUrl = baseUrl || 'https://agent.visor.no';
 
-      if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('Session expired. Please refresh the page.');
-        } else if (response.status === 429) {
-          throw new Error('Too many requests. Please wait a moment and try again.');
-        } else {
-          throw new Error(`Server error: ${response.status}`);
-        }
+      // Append empty assistant message we'll fill with streamed tokens
+      setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+
+      const onToken = (token) => {
+        setMessages(prev => {
+          const next = prev.slice();
+          const last = next[next.length - 1];
+          if (last && last.role === 'assistant') {
+            next[next.length - 1] = { ...last, content: (last.content || '') + token };
+          }
+          return next;
+        });
+      };
+
+      let streamed = false;
+      try {
+        const { fullText } = await streamChat(
+          apiBaseUrl,
+          { message: message, conversationId: conversationId },
+          conversationId,
+          onToken
+        );
+        streamed = true;
+        // Replace partial content with server-authoritative full text
+        setMessages(prev => {
+          const next = prev.slice();
+          const last = next[next.length - 1];
+          if (last && last.role === 'assistant') {
+            next[next.length - 1] = { ...last, content: fullText };
+          }
+          return next;
+        });
+      } catch (streamErr) {
+        console.warn('[Visor] streaming failed, falling back to /visor-chat:', streamErr.message);
+        // Remove the empty assistant placeholder before fallback
+        setMessages(prev => {
+          if (prev.length === 0) return prev;
+          const last = prev[prev.length - 1];
+          if (last.role === 'assistant' && !last.content) {
+            return prev.slice(0, -1);
+          }
+          return prev;
+        });
       }
 
-      const data = await response.json();
-      const assistantMessage = { role: 'assistant', content: data.reply || 'No response received.' };
-      setMessages(prev => [...prev, assistantMessage]);
+      if (!streamed) {
+        const response = await fetch(`${apiBaseUrl}/visor-chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Conversation-Id': conversationId
+          },
+          body: JSON.stringify({
+            message: message,
+            conversationId: conversationId
+          })
+        });
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new Error('Session expired. Please refresh the page.');
+          } else if (response.status === 429) {
+            throw new Error('Too many requests. Please wait a moment and try again.');
+          } else {
+            throw new Error(`Server error: ${response.status}`);
+          }
+        }
+
+        const data = await response.json();
+        const assistantMessage = { role: 'assistant', content: data.reply || 'No response received.' };
+        setMessages(prev => [...prev, assistantMessage]);
+      }
 
     } catch (error) {
       console.error('Chat error:', error);
@@ -292,7 +422,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     setError(null);
 
     try {
-      const apiBaseUrl = baseUrl || 'https://sinkerless-sententially-abrielle.ngrok-free.dev';
+      const apiBaseUrl = baseUrl || 'https://agent.visor.no';
       const response = await fetch(`${apiBaseUrl}/api/order/install-guides`, {
         method: 'POST',
         headers: {
@@ -382,34 +512,86 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     setError(null);
 
     try {
-      const apiBaseUrl = baseUrl || 'https://sinkerless-sententially-abrielle.ngrok-free.dev';
-      const response = await fetch(`${apiBaseUrl}/visor-chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Conversation-Id': conversationId
-        },
-        body: JSON.stringify({
-          message: orderMessage,
-          conversationId: conversationId,
-          email: emailValue,
-          order_id: orderIdValue
-        })
-      });
+      const apiBaseUrl = baseUrl || 'https://agent.visor.no';
 
-      if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('Session expired. Please refresh the page.');
-        } else if (response.status === 429) {
-          throw new Error('Too many requests. Please wait a moment and try again.');
-        } else {
-          throw new Error(`Server error: ${response.status}`);
-        }
+      // Append empty assistant message we'll fill with streamed tokens
+      setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+
+      const onToken = (token) => {
+        setMessages(prev => {
+          const next = prev.slice();
+          const last = next[next.length - 1];
+          if (last && last.role === 'assistant') {
+            next[next.length - 1] = { ...last, content: (last.content || '') + token };
+          }
+          return next;
+        });
+      };
+
+      let streamed = false;
+      try {
+        const { fullText } = await streamChat(
+          apiBaseUrl,
+          {
+            message: orderMessage,
+            conversationId: conversationId,
+            email: emailValue,
+            order_id: orderIdValue
+          },
+          conversationId,
+          onToken
+        );
+        streamed = true;
+        setMessages(prev => {
+          const next = prev.slice();
+          const last = next[next.length - 1];
+          if (last && last.role === 'assistant') {
+            next[next.length - 1] = { ...last, content: fullText };
+          }
+          return next;
+        });
+      } catch (streamErr) {
+        console.warn('[Visor] streaming failed, falling back to /visor-chat:', streamErr.message);
+        setMessages(prev => {
+          if (prev.length === 0) return prev;
+          const last = prev[prev.length - 1];
+          if (last.role === 'assistant' && !last.content) {
+            return prev.slice(0, -1);
+          }
+          return prev;
+        });
       }
 
-      const data = await response.json();
-      const assistantMessage = { role: 'assistant', content: data.reply || 'No response received.' };
-      setMessages(prev => [...prev, assistantMessage]);
+      if (!streamed) {
+        const response = await fetch(`${apiBaseUrl}/visor-chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Conversation-Id': conversationId
+          },
+          body: JSON.stringify({
+            message: orderMessage,
+            conversationId: conversationId,
+            email: emailValue,
+            order_id: orderIdValue
+          })
+        });
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new Error('Session expired. Please refresh the page.');
+          } else if (response.status === 429) {
+            throw new Error('Too many requests. Please wait a moment and try again.');
+          } else {
+            throw new Error(`Server error: ${response.status}`);
+          }
+        }
+
+        const data = await response.json();
+        const assistantMessage = { role: 'assistant', content: data.reply || 'No response received.' };
+        setMessages(prev => [...prev, assistantMessage]);
+      }
+
       setOrderEmail('');
       setOrderId('');
       setSelectedOption(null); // Clear order form after submission
