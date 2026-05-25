@@ -1,24 +1,19 @@
 /**
- * Patched searchSimilar() — fixes the topK over-fetch issue.
+ * embeddingService.js  (updated for FAQ fast-path PR)
  *
- * BEFORE: searchSimilar(topK=24) → Pinecone topK=120 → sort → return 24.
- *         That's 5x more vectors than needed, transferred and sorted twice.
+ * Changes vs. the latency PR version:
+ *   - searchSimilar() now consults embeddingCache before calling OpenAI
+ *   - Cache hits skip the embedding API entirely (saves ~300-500ms)
+ *   - Pinecone query still runs every time (we don't cache retrieval results)
  *
- * AFTER:  searchSimilar(topK=14) → Pinecone topK=14 → return as-is.
- *         Pinecone already returns results sorted by cosine similarity, so
- *         the extra over-fetch added latency for no improvement in quality.
- *
- * If you ever need the old behaviour (e.g. extreme recall for debugging),
- * you can still pass any topK explicitly.
- *
- * Drop this file in to replace the existing server/utils/embeddingService.js.
- * All other functions in the file are unchanged.
+ * Drop-in replacement for server/utils/embeddingService.js
  */
 
 const { OpenAIEmbeddings } = require('@langchain/openai');
 const { Pinecone } = require('@pinecone-database/pinecone');
 const { Tiktoken } = require('js-tiktoken/lite');
 const cl100k_base = require('js-tiktoken/ranks/cl100k_base');
+const { getCachedEmbedding, setCachedEmbedding } = require('./embeddingCache');
 
 let pineconeClient = null;
 let pineconeIndex = null;
@@ -158,34 +153,37 @@ async function embedAndStore(docs, sourceName) {
 /**
  * Search for similar vectors in Pinecone.
  *
- * @param {string} query - Query text
- * @param {number} topK - Number of results to return (default: 10)
- * @returns {Promise<Array<{score, text, source, chunkId}>>}
+ * Performance optimizations (vs. earlier versions):
+ *  1. No topK over-fetch (Pinecone already returns results sorted by score)
+ *  2. Query embedding is cached in-process for 5 minutes (skip OpenAI call
+ *     for repeat queries — common with FAQ-heavy traffic)
  *
- * CHANGE FROM PREVIOUS VERSION:
- *  - Removed the topK*5 over-fetch (was 120 vectors for topK=24).
- *  - Removed the redundant secondary sort (Pinecone already sorts by score).
- *  - Saves ~150-300ms per RAG search.
+ * @param {string} query
+ * @param {number} topK
+ * @returns {Promise<Array<{score, text, source, chunkId}>>}
  */
 async function searchSimilar(query, topK = 10) {
   try {
     const index = await initializePinecone();
-    const embeddings = new OpenAIEmbeddings({
-      openAIApiKey: process.env.OPENAI_API_KEY,
-      modelName: 'text-embedding-3-large',
-    });
 
-    const queryEmbedding = await embeddings.embedQuery(query);
+    // ---- Embedding (cached) ----
+    let queryEmbedding = getCachedEmbedding(query);
+    if (!queryEmbedding) {
+      const embeddings = new OpenAIEmbeddings({
+        openAIApiKey: process.env.OPENAI_API_KEY,
+        modelName: 'text-embedding-3-large',
+      });
+      queryEmbedding = await embeddings.embedQuery(query);
+      setCachedEmbedding(query, queryEmbedding);
+    }
 
-    // Request exactly topK — Pinecone returns results sorted by cosine
-    // similarity, no need to over-fetch.
+    // ---- Pinecone query (always fresh) ----
     const queryResponse = await index.query({
       vector: queryEmbedding,
       topK,
       includeMetadata: true,
     });
 
-    // Map directly (already sorted by score)
     const results = (queryResponse.matches || []).map((match) => ({
       score: match.score,
       text: match.metadata?.text || '',

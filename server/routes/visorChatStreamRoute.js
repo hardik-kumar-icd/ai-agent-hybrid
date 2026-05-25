@@ -1,33 +1,23 @@
 /**
- * Streaming Visor chat endpoint.
+ * visorChatStreamRoute.js  (updated for FAQ fast-path PR)
  *
- * Mounted at: POST /visor-chat/stream
+ * Changes vs. the latency PR version:
+ *   - Meta event now includes `path` field showing which execution path ran
+ *     ('fast' | 'complex' | 'order') for debugging in DevTools
+ *   - Adds cache stats endpoint at GET /visor-chat/stream/stats
  *
- * Why a separate endpoint?
- *  - Backward compatibility: the existing /visor-chat keeps working unchanged.
- *  - The widget tries this endpoint first and falls back to /visor-chat if
- *    streaming fails for any reason (CSP, proxy buffering, old build).
- *
- * Protocol: Server-Sent Events (SSE).
- *
- * Events the client receives:
- *   data: {"type":"meta","messageId":"..."}   sent once at the start
- *   data: {"type":"token","content":"..."}    sent for each token
- *   data: {"type":"done","content":"FULL"}    sent when complete
- *   data: {"type":"error","message":"..."}    sent on error
- *
- * Each event is terminated with a blank line (standard SSE format).
+ * Drop-in replacement for server/routes/visorChatStreamRoute.js
  */
 
 const express = require('express');
 const router = express.Router();
 const { randomUUID } = require('crypto');
-const { processVisorMessageStream } = require('../agents/visorAgentStream');
+const { processVisorMessageStream, getLastExecutionPath } = require('../agents/visorAgentStream');
 const { validateMessage } = require('../middlewares/validation');
 const { sessionMiddleware } = require('../middlewares/session');
 const { logApiRequest, logOrderLookup, maskEmail, maskOrderId } = require('../utils/securityLogger');
+const { getCacheStats } = require('../utils/embeddingCache');
 
-// Reuse the same regex helpers as the non-streaming route
 function extractOrderIdFromMessage(message) {
   if (!message || typeof message !== 'string') return null;
   const patterns = [
@@ -53,20 +43,17 @@ function extractEmailFromMessage(message) {
   return m ? m[0] : null;
 }
 
-// SSE helpers ---------------------------------------------------------------
 function sendSse(res, payload) {
-  // Each SSE event: "data: <json>\n\n"
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-// Encourage flushing through Nginx (we also set proxy_buffering off in nginx)
 function flush(res) {
   if (typeof res.flush === 'function') {
     try { res.flush(); } catch (_) { /* ignore */ }
   }
 }
 
-// GET handler — info
+// GET handler — info + cache stats
 router.get('/', (req, res) => {
   res.json({
     message: 'Visor.no AI Agent streaming endpoint',
@@ -81,6 +68,14 @@ router.get('/', (req, res) => {
     },
     events: ['meta', 'token', 'done', 'error'],
     note: 'Falls back to /visor-chat if streaming is not supported.',
+    embedding_cache: getCacheStats(),
+  });
+});
+
+// GET stats — cache + path metrics (handy for tuning)
+router.get('/stats', (req, res) => {
+  res.json({
+    embedding_cache: getCacheStats(),
   });
 });
 
@@ -92,19 +87,17 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // Tell Nginx: do not buffer
-  // CORS — match the global CORS config but be explicit for SSE
+  res.setHeader('X-Accel-Buffering', 'no');
   const origin = req.headers.origin || '*';
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Vary', 'Origin');
 
-  // Flush headers immediately so the client opens the stream
   if (typeof res.flushHeaders === 'function') {
     res.flushHeaders();
   }
 
-  // Heartbeat keeps proxies from killing the connection during long thinking
+  // Heartbeat to keep proxies happy during long thinking
   const heartbeat = setInterval(() => {
     try {
       res.write(': hb\n\n');
@@ -114,18 +107,16 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
     }
   }, 15000);
 
-  // Detach heartbeat when the connection closes
   req.on('close', () => clearInterval(heartbeat));
 
   try {
     const { message, email, order_id } = req.body;
     logApiRequest(req, '/visor-chat/stream');
 
-    // Send meta event with messageId (foundation for feedback in Drop 4)
-    sendSse(res, { type: 'meta', messageId });
+    // Send initial meta — path is unknown yet, will be confirmed in done event
+    sendSse(res, { type: 'meta', messageId, path: 'pending' });
     flush(res);
 
-    // Order/email plumbing — identical to /visor-chat
     const extractedOrderId = extractOrderIdFromMessage(message);
     const extractedEmail = extractEmailFromMessage(message);
     const sessionData = req.session.get();
@@ -153,7 +144,7 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
 
     const history = req.session.getHistory ? req.session.getHistory() : [];
 
-    // Stream the agent's tokens to the client
+    const startTime = Date.now();
     const fullText = await processVisorMessageStream(
       enhancedMessage,
       history,
@@ -162,16 +153,27 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
         flush(res);
       },
     );
+    const durationMs = Date.now() - startTime;
+    const path = getLastExecutionPath();
 
-    // Persist to session for next turn's context
+    // Persist to session for next turn
     if (req.session.appendToHistory) {
       req.session.appendToHistory('user', enhancedMessage);
       req.session.appendToHistory('assistant', fullText);
     }
 
-    // Final event with full text (so the client can store it cleanly)
-    sendSse(res, { type: 'done', content: fullText, messageId });
+    // Final event includes path + duration for debugging
+    sendSse(res, {
+      type: 'done',
+      content: fullText,
+      messageId,
+      path,
+      durationMs,
+    });
     flush(res);
+
+    // Log path + duration server-side too (useful for tuning the classifier)
+    console.log(`[Stream] path=${path} duration=${durationMs}ms messageId=${messageId}`);
   } catch (err) {
     console.error('[Visor Stream] error:', err);
     try {

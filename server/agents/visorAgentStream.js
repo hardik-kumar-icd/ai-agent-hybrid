@@ -1,57 +1,107 @@
 /**
- * Streaming variant of the Visor agent.
+ * Streaming variant of the Visor agent — with FAQ FAST PATH.
  *
- * Same tool-calling loop as processVisorMessage(), but the FINAL answer is
- * streamed token-by-token via an onToken(text) callback so the route can push
- * each chunk to the client via Server-Sent Events.
+ * Two execution paths:
  *
- * Latency wins implemented here:
- *  1. Tool-decision step uses gpt-4o-mini (cheaper + faster) — it just decides
- *     which tool to call.
- *  2. Final synthesis step uses gpt-4o (quality) but streams, so user sees
- *     first token within ~500ms instead of waiting for the whole answer.
- *  3. Query expansion is dropped (saves an extra LLM round-trip per RAG call).
- *  4. RAG over-fetch fixed in embeddingService.js (separate file).
+ *   FAST PATH (FAQ-style queries, classified by queryClassifier.js):
+ *     - Skip the LLM router (saves ~800ms)
+ *     - Direct rag_search call (with embedding cache)
+ *     - Stream the answer with gpt-4o-mini if context is simple (1-2 chunks,
+ *       no products), gpt-4o if it's product-rich
+ *     - Total: ~2.2s typical, ~1.5-1.8s on cache hit
  *
- * This file is purely additive — the original processVisorMessage() in
- * visorAgent.js is untouched and remains the non-streaming fallback.
+ *   COMPLEX PATH (default — multi-part, ambiguous, comparison, follow-up):
+ *     - Full tool-routing loop with gpt-4o-mini for routing decisions
+ *     - Synthesis with gpt-4o (streaming)
+ *     - Total: ~3-4s
+ *
+ * Both paths stream tokens via the same onToken(text) callback.
+ * Both paths emit the same return value so the route layer doesn't care
+ * which one ran (the route only needs the optional `path` debug header,
+ * which we expose via getLastExecutionPath()).
  */
 
 const { ChatOpenAI } = require('@langchain/openai');
-const { HumanMessage, AIMessage, SystemMessage, ToolMessage } = require('@langchain/core/messages');
+const { HumanMessage, AIMessage, SystemMessage } = require('@langchain/core/messages');
 const { searchSimilar } = require('../utils/embeddingService');
 const { searchTickets } = require('../utils/ticketSearch');
+const { classifyQuery } = require('../utils/queryClassifier');
 const getOrderDetailsTool = require('../tools/getOrderDetailsTool');
 const getOrderStatusTool = require('../tools/getOrderStatusTool');
 
-// Reuse helpers from the existing agent so behaviour stays identical.
-// (These are exported in the patch we add to visorAgent.js — see PR.)
 const {
   hasSubstantiveKbContext,
   isSensitivePolicyQuery,
   sanitizeUnsupportedPaymentPolicy,
   reRankByKeywordOverlap,
   sanitizeTicketText,
-  ticketMatchesQuery,
   getSystemPrompt,
   getToolDefinitions,
 } = require('./visorAgentShared');
 
-/**
- * RAG tool — same logic as the original, but without the expandQueryForSearch()
- * call that added ~500ms per search for marginal gain.
- */
+// ---------------------------------------------------------------------------
+// Last execution path — exposed for the route layer's debug meta event.
+// Stored as a closure variable so we can tell the caller which path ran
+// without changing the function signature.
+// ---------------------------------------------------------------------------
+let _lastPath = 'complex';
+function getLastExecutionPath() {
+  return _lastPath;
+}
+
+// ---------------------------------------------------------------------------
+// Conservative model picker — used by the FAST PATH only.
+// Decides which model synthesizes the answer based on retrieval results.
+//
+//   gpt-4o-mini:   short FAQ-style answers (≤2 KB chunks, no products)
+//   gpt-4o:        anything with ≥3 chunks OR product content
+//
+// The complex path always uses gpt-4o for synthesis (existing behaviour).
+// ---------------------------------------------------------------------------
+function pickFastPathModel(docs) {
+  if (!Array.isArray(docs) || docs.length === 0) return 'gpt-4o-mini';
+
+  // 3+ KB chunks → use 4o (we're synthesizing across multiple sources)
+  if (docs.length >= 3) return 'gpt-4o';
+
+  // Any chunk from a product source → use 4o (richer formatting needed)
+  const hasProduct = docs.some((d) => {
+    const src = (d.source || '').toLowerCase();
+    const txt = (d.text || '').toLowerCase();
+    // Heuristic: source names like 'products', 'visor_products', or text containing
+    // product-specific markers (price, sku, max_width, attributes)
+    if (src.includes('product')) return true;
+    if (/\b(price|pris|sku|max.?(width|bredde)|systemb)/i.test(txt)) return true;
+    return false;
+  });
+  if (hasProduct) return 'gpt-4o';
+
+  // Default: short FAQ answer → mini is plenty
+  return 'gpt-4o-mini';
+}
+
+// ---------------------------------------------------------------------------
+// RAG retrieval — same as complex path, just exposed so fast path can call
+// it without going through the LLM tool loop.
+// ---------------------------------------------------------------------------
+async function ragRetrieve(query) {
+  const topK = 10;
+  let docs = await searchSimilar(query, topK + 4);
+  docs = reRankByKeywordOverlap(docs, query);
+  docs = docs.slice(0, topK);
+  return docs;
+}
+
+function docsToContext(docs) {
+  return docs
+    .map((doc, idx) => `[Context ${idx + 1} from ${doc.source}]: ${doc.text}`)
+    .join('\n\n');
+}
+
 async function ragToolFast({ query }) {
   try {
-    const topK = 10;
-    let docs = await searchSimilar(query, topK + 4); // small over-fetch for re-rank
-    docs = reRankByKeywordOverlap(docs, query);
-    docs = docs.slice(0, topK);
-
-    const context = docs
-      .map((doc, idx) => `[Context ${idx + 1} from ${doc.source}]: ${doc.text}`)
-      .join('\n\n');
-
+    const docs = await ragRetrieve(query);
+    const context = docsToContext(docs);
     if (!context || context.trim().length === 0) {
       return 'NO_KNOWLEDGE_BASE_DATA: The knowledge base is empty or contains no relevant information. Do NOT make up products or use training data.';
     }
@@ -62,10 +112,9 @@ async function ragToolFast({ query }) {
   }
 }
 
-/**
- * Ticket fallback — same as original (only triggered if KB has no substantive data).
- * Not streamed because it's a fallback path used in <10% of queries.
- */
+// ---------------------------------------------------------------------------
+// Ticket fallback (rarely used, kept identical to complex path).
+// ---------------------------------------------------------------------------
 async function answerFromTicketsFast(userMessage) {
   const ticketDocs = await searchTickets(userMessage, 5);
   if (!ticketDocs || ticketDocs.length === 0) return null;
@@ -104,27 +153,73 @@ If the examples are not sufficient, give a best-effort helpful answer and, if ne
   return typeof response.content === 'string' ? response.content : String(response.content || '');
 }
 
-/**
- * Process a Visor message with streaming.
- *
- * @param {string} message - Current user message
- * @param {Array<{role: 'user'|'assistant', content: string}>} conversationHistory
- * @param {(token: string) => void} onToken - Called for each chunk of the final answer
- * @returns {Promise<string>} - Full final answer (also accumulated from streamed tokens)
- */
-async function processVisorMessageStream(message, conversationHistory = [], onToken = () => {}) {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is not set in environment variables');
+// ===========================================================================
+// FAST PATH
+// ===========================================================================
+async function processFastPath(message, conversationHistory, onToken) {
+  _lastPath = 'fast';
+
+  // 1. Direct retrieval (no LLM router call)
+  const docs = await ragRetrieve(message);
+  const context = docsToContext(docs);
+
+  // No KB hits at all → fall through to complex path (which can try tickets)
+  if (!context || context.trim().length === 0) {
+    return null;  // sentinel: caller should retry on complex path
   }
+
+  // Pick model based on context shape (conservative)
+  const modelName = pickFastPathModel(docs);
+
+  const synthesisModel = new ChatOpenAI({
+    openAIApiKey: process.env.OPENAI_API_KEY,
+    modelName,
+    temperature: 0.3,
+    streaming: true,
+  });
+
+  // Build minimal message list — system prompt + last 2 turns + current question + context
+  const recentHistory = (conversationHistory || []).slice(-4).flatMap((turn) => {
+    if (turn.role === 'user') return [new HumanMessage(turn.content)];
+    if (turn.role === 'assistant') return [new AIMessage(turn.content)];
+    return [];
+  });
+
+  const messages = [
+    new SystemMessage(getSystemPrompt()),
+    ...recentHistory,
+    new HumanMessage(
+      `${message}\n\n[Knowledge base context — answer using only this; do not invent details]\n\n${context}`
+    ),
+  ];
+
+  let fullText = '';
+  const stream = await synthesisModel.stream(messages);
+  for await (const chunk of stream) {
+    const token = typeof chunk.content === 'string'
+      ? chunk.content
+      : (chunk.content?.[0]?.text || '');
+    if (token) {
+      fullText += token;
+      try { onToken(token); } catch (cbErr) {
+        console.error('[Stream] onToken error:', cbErr.message);
+      }
+    }
+  }
+
+  return sanitizeUnsupportedPaymentPolicy(fullText, message);
+}
+
+// ===========================================================================
+// COMPLEX PATH (existing tool-routing loop with streaming synthesis)
+// ===========================================================================
+async function processComplexPath(message, conversationHistory, onToken) {
+  _lastPath = 'complex';
 
   const systemPrompt = getSystemPrompt();
   const toolDefinitions = getToolDefinitions();
 
-  // ---------------------------------------------------------------------
-  // Step 1: tool-decision pass with gpt-4o-mini (fast, cheap, accurate enough
-  // to pick the right tool). Not streamed because we need the tool calls
-  // before we can do anything useful.
-  // ---------------------------------------------------------------------
+  // Tool-decision pass — gpt-4o-mini is fast + accurate enough for routing
   const routerModel = new ChatOpenAI({
     openAIApiKey: process.env.OPENAI_API_KEY,
     modelName: 'gpt-4o-mini',
@@ -145,7 +240,6 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
 
   let response = await routerModel.invoke(messages);
 
-  // Normalize tool_calls across LangChain response variants
   function extractToolCalls(r) {
     if (r.tool_calls && Array.isArray(r.tool_calls)) return r.tool_calls;
     if (r.toolCalls && Array.isArray(r.toolCalls)) return r.toolCalls;
@@ -157,11 +251,6 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
 
   let toolCalls = extractToolCalls(response);
 
-  // ---------------------------------------------------------------------
-  // Step 2: run tool-calling loop. Each iteration may bring more tool calls.
-  // We keep the router (mini) for follow-up tool decisions and only switch
-  // to the synthesis model when we have a final answer to stream.
-  // ---------------------------------------------------------------------
   while (toolCalls && toolCalls.length > 0) {
     const toolResults = [];
 
@@ -240,15 +329,7 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
     toolCalls = extractToolCalls(response);
   }
 
-  // ---------------------------------------------------------------------
-  // Step 3: We now have tool results + the router's final message.
-  // Re-generate the final answer with gpt-4o STREAMING. This is where the
-  // user perceives the latency improvement.
-  //
-  // Why re-generate instead of using the router's final text? Two reasons:
-  //  - The router was gpt-4o-mini, which can be terser than we want.
-  //  - We get streaming "for free" by switching to model.stream() here.
-  // ---------------------------------------------------------------------
+  // Final synthesis with gpt-4o streaming
   const synthesisModel = new ChatOpenAI({
     openAIApiKey: process.env.OPENAI_API_KEY,
     modelName: 'gpt-4o',
@@ -256,8 +337,6 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
     streaming: true,
   });
 
-  // Build a final-answer message list:
-  // system + history + user + tool messages + a synthesis nudge
   const finalMessages = messages.slice();
   finalMessages.push(new HumanMessage(
     'Now write the final answer to the user. Use the tool results above. Same language as the user\'s last message.'
@@ -272,19 +351,48 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
       : (chunk.content?.[0]?.text || '');
     if (token) {
       fullText += token;
-      try {
-        onToken(token);
-      } catch (cbErr) {
-        // Don't let a callback error kill the stream
-        console.error('[Stream] onToken callback error:', cbErr.message);
+      try { onToken(token); } catch (cbErr) {
+        console.error('[Stream] onToken error:', cbErr.message);
       }
     }
   }
 
-  const sanitized = sanitizeUnsupportedPaymentPolicy(fullText, message);
-  return sanitized;
+  return sanitizeUnsupportedPaymentPolicy(fullText, message);
+}
+
+// ===========================================================================
+// PUBLIC ENTRY POINT
+// ===========================================================================
+async function processVisorMessageStream(message, conversationHistory = [], onToken = () => {}) {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is not set in environment variables');
+  }
+
+  const classification = classifyQuery(message, conversationHistory);
+
+  // Order intent — always use complex path (it has the order tools)
+  if (classification === 'order') {
+    _lastPath = 'order';  // distinguished from 'complex' for telemetry
+    return processComplexPath(message, conversationHistory, onToken);
+  }
+
+  // FAST PATH — try first, fall back to complex if no KB hit
+  if (classification === 'fast_path') {
+    try {
+      const answer = await processFastPath(message, conversationHistory, onToken);
+      if (answer !== null) return answer;
+      // Fall through if fast path returned null (no KB hits)
+      console.log('[Stream] fast_path empty, falling back to complex');
+    } catch (err) {
+      console.error('[Stream] fast_path error, falling back:', err.message);
+    }
+  }
+
+  // COMPLEX PATH (default + fallback)
+  return processComplexPath(message, conversationHistory, onToken);
 }
 
 module.exports = {
   processVisorMessageStream,
+  getLastExecutionPath,
 };
