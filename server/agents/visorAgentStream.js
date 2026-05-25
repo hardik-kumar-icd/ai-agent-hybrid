@@ -1,11 +1,12 @@
 /**
- * visorAgentStream.js  (updated for brevity PR)
+ * visorAgentStream.js  (updated for Drop 1 — intelligence foundations)
  *
- * Changes vs. previous version:
- *   - Fast path: maxTokens=250 (hard cap on FAQ answers)
- *   - Complex path: maxTokens=500 (hard cap on tool-routed answers)
- *   - Lower temperature on both paths (less rambling)
- *   - Complex path synthesis prompt now explicitly asks for brevity
+ * Changes vs. previous version (brevity PR):
+ *   - Tracks the full retrieval trace (chunks used, model, cache hit, etc.)
+ *     in a closure variable and exposes it via getLastRetrievalTrace()
+ *   - Trace is reset at the start of every request and populated as the
+ *     agent does its work
+ *   - No change to user-visible behavior
  *
  * Drop-in replacement for server/agents/visorAgentStream.js
  */
@@ -15,6 +16,7 @@ const { HumanMessage, AIMessage, SystemMessage } = require('@langchain/core/mess
 const { searchSimilar } = require('../utils/embeddingService');
 const { searchTickets } = require('../utils/ticketSearch');
 const { classifyQuery } = require('../utils/queryClassifier');
+const { getCachedEmbedding } = require('../utils/embeddingCache');
 const getOrderDetailsTool = require('../tools/getOrderDetailsTool');
 const getOrderStatusTool = require('../tools/getOrderStatusTool');
 
@@ -28,19 +30,39 @@ const {
   getToolDefinitions,
 } = require('./visorAgentShared');
 
-// ---------------------------------------------------------------------------
-// Token caps — balanced setting per user request:
-//   FAST  250 tokens ~= 180 words (concise FAQ answer)
-//   COMPLEX 500 tokens ~= 350 words (covers comparisons + product detail)
-// ---------------------------------------------------------------------------
 const FAST_PATH_MAX_TOKENS = 250;
 const COMPLEX_PATH_MAX_TOKENS = 500;
 
+// ---------------------------------------------------------------------------
+// Trace state — populated during a single request, returned afterwards.
+// Note: this is closure-shared (not request-scoped) because Node's PM2 fork
+// mode runs one request at a time within a single worker. If we ever go
+// cluster mode we'll need to use AsyncLocalStorage.
+// ---------------------------------------------------------------------------
 let _lastPath = 'complex';
+let _lastTrace = null;
+
+function resetTrace() {
+  _lastTrace = {
+    docs: [],         // [{chunk_id, source, score, text, rank}]
+    searchQuery: null,
+    modelUsed: null,
+    cacheHit: false,
+    toolCalls: [],
+  };
+}
+
 function getLastExecutionPath() {
   return _lastPath;
 }
 
+function getLastRetrievalTrace() {
+  return _lastTrace;
+}
+
+// ---------------------------------------------------------------------------
+// Conservative model picker
+// ---------------------------------------------------------------------------
 function pickFastPathModel(docs) {
   if (!Array.isArray(docs) || docs.length === 0) return 'gpt-4o-mini';
   if (docs.length >= 3) return 'gpt-4o';
@@ -57,9 +79,25 @@ function pickFastPathModel(docs) {
 
 async function ragRetrieve(query) {
   const topK = 10;
+  // Snapshot the embedding cache state BEFORE the search so we can detect a hit
+  const cacheHitBefore = getCachedEmbedding(query) !== null;
   let docs = await searchSimilar(query, topK + 4);
   docs = reRankByKeywordOverlap(docs, query);
   docs = docs.slice(0, topK);
+
+  // Record into trace
+  if (_lastTrace) {
+    _lastTrace.searchQuery = query;
+    _lastTrace.cacheHit = cacheHitBefore;
+    _lastTrace.docs = docs.map((d, idx) => ({
+      chunk_id: d.chunkId || d.chunk_id || null,
+      source: d.source || null,
+      score: d.score || null,
+      text: d.text || '',
+      rank: idx + 1,
+    }));
+  }
+
   return docs;
 }
 
@@ -125,7 +163,7 @@ If the examples are not sufficient, give a best-effort helpful answer and, if ne
 }
 
 // ===========================================================================
-// FAST PATH — short FAQ answers
+// FAST PATH
 // ===========================================================================
 async function processFastPath(message, conversationHistory, onToken) {
   _lastPath = 'fast';
@@ -133,13 +171,11 @@ async function processFastPath(message, conversationHistory, onToken) {
   const docs = await ragRetrieve(message);
   const context = docsToContext(docs);
 
-  if (!context || context.trim().length === 0) {
-    return null; // signal caller to fall back to complex path
-  }
+  if (!context || context.trim().length === 0) return null;
 
   const modelName = pickFastPathModel(docs);
+  if (_lastTrace) _lastTrace.modelUsed = modelName;
 
-  // Lower temperature + hard token cap → terse, deterministic FAQ answers
   const synthesisModel = new ChatOpenAI({
     openAIApiKey: process.env.OPENAI_API_KEY,
     modelName,
@@ -180,7 +216,7 @@ async function processFastPath(message, conversationHistory, onToken) {
 }
 
 // ===========================================================================
-// COMPLEX PATH — tool routing + capped synthesis
+// COMPLEX PATH
 // ===========================================================================
 async function processComplexPath(message, conversationHistory, onToken) {
   _lastPath = 'complex';
@@ -238,6 +274,11 @@ async function processComplexPath(message, conversationHistory, onToken) {
         continue;
       }
       toolCallId = toolCall.id || toolCall.tool_call_id;
+
+      // Track tool calls for telemetry
+      if (_lastTrace && functionName) {
+        _lastTrace.toolCalls.push(functionName);
+      }
 
       let args = {};
       try {
@@ -297,7 +338,6 @@ async function processComplexPath(message, conversationHistory, onToken) {
     toolCalls = extractToolCalls(response);
   }
 
-  // Final synthesis — capped at 500 tokens with explicit brevity nudge
   const synthesisModel = new ChatOpenAI({
     openAIApiKey: process.env.OPENAI_API_KEY,
     modelName: 'gpt-4o',
@@ -305,6 +345,8 @@ async function processComplexPath(message, conversationHistory, onToken) {
     maxTokens: COMPLEX_PATH_MAX_TOKENS,
     streaming: true,
   });
+
+  if (_lastTrace) _lastTrace.modelUsed = 'gpt-4o';
 
   const finalMessages = messages.slice();
   finalMessages.push(new HumanMessage(
@@ -337,6 +379,7 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
     throw new Error('OPENAI_API_KEY is not set in environment variables');
   }
 
+  resetTrace();
   const classification = classifyQuery(message, conversationHistory);
 
   if (classification === 'order') {
@@ -360,4 +403,5 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
 module.exports = {
   processVisorMessageStream,
   getLastExecutionPath,
+  getLastRetrievalTrace,
 };

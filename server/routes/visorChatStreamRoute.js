@@ -1,10 +1,12 @@
 /**
- * visorChatStreamRoute.js  (updated for FAQ fast-path PR)
+ * visorChatStreamRoute.js  (updated for Drop 1 — telemetry)
  *
- * Changes vs. the latency PR version:
- *   - Meta event now includes `path` field showing which execution path ran
- *     ('fast' | 'complex' | 'order') for debugging in DevTools
- *   - Adds cache stats endpoint at GET /visor-chat/stream/stats
+ * Changes vs. previous version (FAQ fast-path PR):
+ *   - Pre-generates a `userMessageId` AND `assistantMessageId` (UUIDs) at the
+ *     start of each request, includes both in the meta event
+ *   - After the SSE response completes, fires telemetry.logTurn() to persist
+ *     the conversation, both messages, and the retrieval trace to Postgres
+ *   - Telemetry is wrapped in setImmediate so it never delays the chat response
  *
  * Drop-in replacement for server/routes/visorChatStreamRoute.js
  */
@@ -12,12 +14,18 @@
 const express = require('express');
 const router = express.Router();
 const { randomUUID } = require('crypto');
-const { processVisorMessageStream, getLastExecutionPath } = require('../agents/visorAgentStream');
+const {
+  processVisorMessageStream,
+  getLastExecutionPath,
+  getLastRetrievalTrace,
+} = require('../agents/visorAgentStream');
 const { validateMessage } = require('../middlewares/validation');
 const { sessionMiddleware } = require('../middlewares/session');
-const { logApiRequest, logOrderLookup, maskEmail, maskOrderId } = require('../utils/securityLogger');
+const { logApiRequest, logOrderLookup } = require('../utils/securityLogger');
 const { getCacheStats } = require('../utils/embeddingCache');
+const telemetry = require('../services/telemetryService');
 
+// ---- Order/email extraction helpers (unchanged) ----
 function extractOrderIdFromMessage(message) {
   if (!message || typeof message !== 'string') return null;
   const patterns = [
@@ -43,6 +51,14 @@ function extractEmailFromMessage(message) {
   return m ? m[0] : null;
 }
 
+function detectLanguage(message) {
+  if (!message) return null;
+  // Norwegian letters or common Norwegian words = nb, else en
+  if (/[æøå]/i.test(message)) return 'nb';
+  if (/\b(hva|hvor|hvordan|når|hvilke|er|har|vi|du|jeg)\b/i.test(message)) return 'nb';
+  return 'en';
+}
+
 function sendSse(res, payload) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
@@ -53,7 +69,7 @@ function flush(res) {
   }
 }
 
-// GET handler — info + cache stats
+// ---- GET handlers ----
 router.get('/', (req, res) => {
   res.json({
     message: 'Visor.no AI Agent streaming endpoint',
@@ -72,16 +88,19 @@ router.get('/', (req, res) => {
   });
 });
 
-// GET stats — cache + path metrics (handy for tuning)
 router.get('/stats', (req, res) => {
   res.json({
     embedding_cache: getCacheStats(),
   });
 });
 
-// POST /visor-chat/stream
+// ---- POST handler ----
 router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
-  const messageId = randomUUID();
+  // Pre-generate both message IDs upfront. The widget needs the assistant
+  // message id in the meta event (for future feedback). The user message id
+  // is internal but stored for clean PK on the messages table.
+  const userMessageId = randomUUID();
+  const assistantMessageId = randomUUID();
 
   // ---- SSE headers ----
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -93,28 +112,26 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Vary', 'Origin');
 
-  if (typeof res.flushHeaders === 'function') {
-    res.flushHeaders();
-  }
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
-  // Heartbeat to keep proxies happy during long thinking
   const heartbeat = setInterval(() => {
-    try {
-      res.write(': hb\n\n');
-      flush(res);
-    } catch (_) {
-      clearInterval(heartbeat);
-    }
+    try { res.write(': hb\n\n'); flush(res); } catch (_) { clearInterval(heartbeat); }
   }, 15000);
-
   req.on('close', () => clearInterval(heartbeat));
+
+  // Buffer for telemetry (so we don't depend on closure scope after res.end)
+  let _userContent = '';
+  let _assistantContent = '';
+  let _email = null;
+  let _orderId = null;
+  let _language = null;
 
   try {
     const { message, email, order_id } = req.body;
     logApiRequest(req, '/visor-chat/stream');
 
-    // Send initial meta — path is unknown yet, will be confirmed in done event
-    sendSse(res, { type: 'meta', messageId, path: 'pending' });
+    // Send meta event with messageId (for the widget's feedback foundation)
+    sendSse(res, { type: 'meta', messageId: assistantMessageId, path: 'pending' });
     flush(res);
 
     const extractedOrderId = extractOrderIdFromMessage(message);
@@ -123,6 +140,11 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
 
     const finalOrderId = order_id || extractedOrderId || sessionData?.order_id || null;
     const finalEmail = email || extractedEmail || sessionData?.email || null;
+
+    _userContent = message;
+    _email = finalEmail;
+    _orderId = finalOrderId;
+    _language = detectLanguage(message);
 
     if (finalOrderId || finalEmail) {
       req.session.update({
@@ -155,6 +177,8 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
     );
     const durationMs = Date.now() - startTime;
     const path = getLastExecutionPath();
+    const trace = getLastRetrievalTrace();
+    _assistantContent = fullText;
 
     // Persist to session for next turn
     if (req.session.appendToHistory) {
@@ -162,22 +186,53 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
       req.session.appendToHistory('assistant', fullText);
     }
 
-    // Final event includes path + duration for debugging
     sendSse(res, {
       type: 'done',
       content: fullText,
-      messageId,
+      messageId: assistantMessageId,
       path,
       durationMs,
     });
     flush(res);
 
-    // Log path + duration server-side too (useful for tuning the classifier)
-    console.log(`[Stream] path=${path} duration=${durationMs}ms messageId=${messageId}`);
+    console.log(`[Stream] path=${path} duration=${durationMs}ms messageId=${assistantMessageId}`);
+
+    // ---- TELEMETRY: fire-and-forget after response is fully sent ----
+    // setImmediate ensures res.end() completes before we touch the DB.
+    setImmediate(() => {
+      telemetry.logTurn({
+        conversationId: req.body.conversationId || req.headers['x-conversation-id'] || null,
+        user: {
+          messageId: userMessageId,
+          content: _userContent,
+          email: _email,
+          orderId: _orderId,
+          language: _language,
+          userAgent: req.headers['user-agent'] || null,
+        },
+        assistant: {
+          messageId: assistantMessageId,
+          content: _assistantContent,
+          language: _language,
+          path,
+          model: trace?.modelUsed || null,
+          toolCalls: trace?.toolCalls?.length > 0 ? trace.toolCalls : null,
+          embeddingCached: trace?.cacheHit || false,
+          latencyMs: durationMs,
+          tokenCount: null,
+        },
+        retrieval: {
+          query: trace?.searchQuery || null,
+          chunks: trace?.docs || [],
+        },
+      }).catch((err) => {
+        console.error('[Telemetry] async failure:', err?.message);
+      });
+    });
   } catch (err) {
     console.error('[Visor Stream] error:', err);
     try {
-      sendSse(res, { type: 'error', message: err.message || 'Internal error', messageId });
+      sendSse(res, { type: 'error', message: err.message || 'Internal error', messageId: assistantMessageId });
     } catch (_) { /* ignore */ }
   } finally {
     clearInterval(heartbeat);
