@@ -1,24 +1,13 @@
 /**
- * Streaming variant of the Visor agent — with FAQ FAST PATH.
+ * visorAgentStream.js  (updated for brevity PR)
  *
- * Two execution paths:
+ * Changes vs. previous version:
+ *   - Fast path: maxTokens=250 (hard cap on FAQ answers)
+ *   - Complex path: maxTokens=500 (hard cap on tool-routed answers)
+ *   - Lower temperature on both paths (less rambling)
+ *   - Complex path synthesis prompt now explicitly asks for brevity
  *
- *   FAST PATH (FAQ-style queries, classified by queryClassifier.js):
- *     - Skip the LLM router (saves ~800ms)
- *     - Direct rag_search call (with embedding cache)
- *     - Stream the answer with gpt-4o-mini if context is simple (1-2 chunks,
- *       no products), gpt-4o if it's product-rich
- *     - Total: ~2.2s typical, ~1.5-1.8s on cache hit
- *
- *   COMPLEX PATH (default — multi-part, ambiguous, comparison, follow-up):
- *     - Full tool-routing loop with gpt-4o-mini for routing decisions
- *     - Synthesis with gpt-4o (streaming)
- *     - Total: ~3-4s
- *
- * Both paths stream tokens via the same onToken(text) callback.
- * Both paths emit the same return value so the route layer doesn't care
- * which one ran (the route only needs the optional `path` debug header,
- * which we expose via getLastExecutionPath()).
+ * Drop-in replacement for server/agents/visorAgentStream.js
  */
 
 const { ChatOpenAI } = require('@langchain/openai');
@@ -40,50 +29,32 @@ const {
 } = require('./visorAgentShared');
 
 // ---------------------------------------------------------------------------
-// Last execution path — exposed for the route layer's debug meta event.
-// Stored as a closure variable so we can tell the caller which path ran
-// without changing the function signature.
+// Token caps — balanced setting per user request:
+//   FAST  250 tokens ~= 180 words (concise FAQ answer)
+//   COMPLEX 500 tokens ~= 350 words (covers comparisons + product detail)
 // ---------------------------------------------------------------------------
+const FAST_PATH_MAX_TOKENS = 250;
+const COMPLEX_PATH_MAX_TOKENS = 500;
+
 let _lastPath = 'complex';
 function getLastExecutionPath() {
   return _lastPath;
 }
 
-// ---------------------------------------------------------------------------
-// Conservative model picker — used by the FAST PATH only.
-// Decides which model synthesizes the answer based on retrieval results.
-//
-//   gpt-4o-mini:   short FAQ-style answers (≤2 KB chunks, no products)
-//   gpt-4o:        anything with ≥3 chunks OR product content
-//
-// The complex path always uses gpt-4o for synthesis (existing behaviour).
-// ---------------------------------------------------------------------------
 function pickFastPathModel(docs) {
   if (!Array.isArray(docs) || docs.length === 0) return 'gpt-4o-mini';
-
-  // 3+ KB chunks → use 4o (we're synthesizing across multiple sources)
   if (docs.length >= 3) return 'gpt-4o';
-
-  // Any chunk from a product source → use 4o (richer formatting needed)
   const hasProduct = docs.some((d) => {
     const src = (d.source || '').toLowerCase();
     const txt = (d.text || '').toLowerCase();
-    // Heuristic: source names like 'products', 'visor_products', or text containing
-    // product-specific markers (price, sku, max_width, attributes)
     if (src.includes('product')) return true;
     if (/\b(price|pris|sku|max.?(width|bredde)|systemb)/i.test(txt)) return true;
     return false;
   });
   if (hasProduct) return 'gpt-4o';
-
-  // Default: short FAQ answer → mini is plenty
   return 'gpt-4o-mini';
 }
 
-// ---------------------------------------------------------------------------
-// RAG retrieval — same as complex path, just exposed so fast path can call
-// it without going through the LLM tool loop.
-// ---------------------------------------------------------------------------
 async function ragRetrieve(query) {
   const topK = 10;
   let docs = await searchSimilar(query, topK + 4);
@@ -112,9 +83,6 @@ async function ragToolFast({ query }) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Ticket fallback (rarely used, kept identical to complex path).
-// ---------------------------------------------------------------------------
 async function answerFromTicketsFast(userMessage) {
   const ticketDocs = await searchTickets(userMessage, 5);
   if (!ticketDocs || ticketDocs.length === 0) return null;
@@ -128,7 +96,8 @@ async function answerFromTicketsFast(userMessage) {
   const model = new ChatOpenAI({
     openAIApiKey: process.env.OPENAI_API_KEY,
     modelName: 'gpt-4o',
-    temperature: 0.5,
+    temperature: 0.3,
+    maxTokens: COMPLEX_PATH_MAX_TOKENS,
   });
 
   const systemPrompt = `You are a Visor.no customer support assistant.
@@ -137,48 +106,48 @@ You are given anonymized examples of previous support tickets (customer question
 Use them as guidance for tone, policies, and typical solutions, but ALWAYS answer the CURRENT user directly.
 
 CRITICAL:
+- BE BRIEF: 1-3 sentences for simple questions, 3-5 short bullet points for procedural answers. NEVER write essays.
 - Do NOT copy any personal data from the examples (names, emails, phone numbers, addresses, order IDs).
 - NEVER invent or output real-looking personal data.
 - Generalize from the examples and focus on the user's question.
 - Match the language of the user's current message (Norwegian vs English).
+- Do NOT start with filler like "Selvfølgelig" or "Of course".
 
 If the examples are not sufficient, give a best-effort helpful answer and, if needed, suggest contacting kundeservice@test.visor.no or phone support.`;
 
   const response = await model.invoke([
     new SystemMessage(systemPrompt),
     new HumanMessage(
-      `Here are some historical ticket examples (sanitized):\n\n${examples}\n\nNow answer this new user question, in the same language as the question:\n\n"${userMessage}"`
+      `Here are some historical ticket examples (sanitized):\n\n${examples}\n\nNow answer this new user question briefly, in the same language as the question:\n\n"${userMessage}"`
     ),
   ]);
   return typeof response.content === 'string' ? response.content : String(response.content || '');
 }
 
 // ===========================================================================
-// FAST PATH
+// FAST PATH — short FAQ answers
 // ===========================================================================
 async function processFastPath(message, conversationHistory, onToken) {
   _lastPath = 'fast';
 
-  // 1. Direct retrieval (no LLM router call)
   const docs = await ragRetrieve(message);
   const context = docsToContext(docs);
 
-  // No KB hits at all → fall through to complex path (which can try tickets)
   if (!context || context.trim().length === 0) {
-    return null;  // sentinel: caller should retry on complex path
+    return null; // signal caller to fall back to complex path
   }
 
-  // Pick model based on context shape (conservative)
   const modelName = pickFastPathModel(docs);
 
+  // Lower temperature + hard token cap → terse, deterministic FAQ answers
   const synthesisModel = new ChatOpenAI({
     openAIApiKey: process.env.OPENAI_API_KEY,
     modelName,
-    temperature: 0.3,
+    temperature: 0.2,
+    maxTokens: FAST_PATH_MAX_TOKENS,
     streaming: true,
   });
 
-  // Build minimal message list — system prompt + last 2 turns + current question + context
   const recentHistory = (conversationHistory || []).slice(-4).flatMap((turn) => {
     if (turn.role === 'user') return [new HumanMessage(turn.content)];
     if (turn.role === 'assistant') return [new AIMessage(turn.content)];
@@ -189,7 +158,7 @@ async function processFastPath(message, conversationHistory, onToken) {
     new SystemMessage(getSystemPrompt()),
     ...recentHistory,
     new HumanMessage(
-      `${message}\n\n[Knowledge base context — answer using only this; do not invent details]\n\n${context}`
+      `${message}\n\n[Knowledge base context — answer using only this; do not invent details. Keep your answer SHORT — 1-3 sentences for facts, up to 5 bullet points for steps.]\n\n${context}`
     ),
   ];
 
@@ -211,7 +180,7 @@ async function processFastPath(message, conversationHistory, onToken) {
 }
 
 // ===========================================================================
-// COMPLEX PATH (existing tool-routing loop with streaming synthesis)
+// COMPLEX PATH — tool routing + capped synthesis
 // ===========================================================================
 async function processComplexPath(message, conversationHistory, onToken) {
   _lastPath = 'complex';
@@ -219,7 +188,6 @@ async function processComplexPath(message, conversationHistory, onToken) {
   const systemPrompt = getSystemPrompt();
   const toolDefinitions = getToolDefinitions();
 
-  // Tool-decision pass — gpt-4o-mini is fast + accurate enough for routing
   const routerModel = new ChatOpenAI({
     openAIApiKey: process.env.OPENAI_API_KEY,
     modelName: 'gpt-4o-mini',
@@ -329,17 +297,18 @@ async function processComplexPath(message, conversationHistory, onToken) {
     toolCalls = extractToolCalls(response);
   }
 
-  // Final synthesis with gpt-4o streaming
+  // Final synthesis — capped at 500 tokens with explicit brevity nudge
   const synthesisModel = new ChatOpenAI({
     openAIApiKey: process.env.OPENAI_API_KEY,
     modelName: 'gpt-4o',
-    temperature: 0.4,
+    temperature: 0.3,
+    maxTokens: COMPLEX_PATH_MAX_TOKENS,
     streaming: true,
   });
 
   const finalMessages = messages.slice();
   finalMessages.push(new HumanMessage(
-    'Now write the final answer to the user. Use the tool results above. Same language as the user\'s last message.'
+    'Write the final answer NOW. Be BRIEF: for comparisons use 2-3 short bullet points per item (1 line each). For simple facts use 1-2 sentences. Never exceed ~350 words. Use tool results above. Same language as the user\'s last message. Do not write introductions or closing paragraphs.'
   ));
 
   let fullText = '';
@@ -370,25 +339,21 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
 
   const classification = classifyQuery(message, conversationHistory);
 
-  // Order intent — always use complex path (it has the order tools)
   if (classification === 'order') {
-    _lastPath = 'order';  // distinguished from 'complex' for telemetry
+    _lastPath = 'order';
     return processComplexPath(message, conversationHistory, onToken);
   }
 
-  // FAST PATH — try first, fall back to complex if no KB hit
   if (classification === 'fast_path') {
     try {
       const answer = await processFastPath(message, conversationHistory, onToken);
       if (answer !== null) return answer;
-      // Fall through if fast path returned null (no KB hits)
       console.log('[Stream] fast_path empty, falling back to complex');
     } catch (err) {
       console.error('[Stream] fast_path error, falling back:', err.message);
     }
   }
 
-  // COMPLEX PATH (default + fallback)
   return processComplexPath(message, conversationHistory, onToken);
 }
 
