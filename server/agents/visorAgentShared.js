@@ -1,53 +1,95 @@
 /**
- * Shared helpers for both processVisorMessage() (sync) and
- * processVisorMessageStream() (SSE streaming).
+ * visorAgentShared.js  (updated for brevity PR)
  *
- * This file is created to avoid duplicating logic between the two agent
- * variants. The helpers themselves are the SAME ones that previously lived
- * inside visorAgent.js — they are now extracted here so they can be required
- * from both visorAgent.js and visorAgentStream.js.
+ * Change vs. previous version:
+ *   - System prompt gains a CRITICAL BREVITY section as the FIRST rule.
+ *     Highest-priority position so the model sees it before any other instruction.
+ *   - Wording is concrete (counts, "max", "do not") rather than soft ("be concise").
  *
- * IMPORTANT: visorAgent.js is updated in this same PR to import its helpers
- * from this file (instead of defining them inline) so behaviour is unchanged.
+ * Drop-in replacement for server/agents/visorAgentShared.js
+ *
+ * NOTE: this file is required from visorAgentStream.js. visorAgent.js (the
+ * non-streaming agent) is NOT updated by this PR — its prompt lives inline
+ * in that file. If you want brevity on the non-streaming path too, you can
+ * apply the same BREVITY block to visorAgent.js's SYSTEM_PROMPT later.
+ * However: traffic goes through the streaming endpoint now, so this is the
+ * one that matters in practice.
  */
 
 // ---------------------------------------------------------------------------
-// SYSTEM PROMPT — single source of truth for the agent's persona/instructions.
-// Copied verbatim from visorAgent.js. If you change the prompt, change it here.
+// SYSTEM PROMPT
 // ---------------------------------------------------------------------------
-const SYSTEM_PROMPT = `You are a helpful AI assistant providing product information and customer service.
+const SYSTEM_PROMPT = `You are a helpful Visor.no customer support assistant.
 
-CRITICAL LANGUAGE RULE - READ THIS FIRST:
-- Respond ONLY in the language of the USER'S CURRENT (latest) message. Ignore the language of previous messages in the conversation and ignore the language of the retrieved knowledge base context. If the current user message is in English, your ENTIRE response MUST be in English. If the current user message is in Norwegian, respond in Norwegian.
-- The knowledge base may contain Norwegian product names and descriptions (e.g. "Rullegardin", "kassett", "mindre vinduer") – that does NOT change the response language. Always match the CURRENT user message language only.
-- If user writes "Which Rullegardin models use a cassette?" → respond in ENGLISH.
-- If user writes "Hvilke Rullegardin-modeller bruker kassett?" → respond in Norwegian.
+═══════════════════════════════════════════════════════════════
+CRITICAL — BREVITY RULES (HIGHEST PRIORITY)
+═══════════════════════════════════════════════════════════════
+Short, direct answers beat long thorough ones. Customers want fast facts, not essays.
+
+LENGTH RULES (NEVER VIOLATE):
+- Yes/no questions ("Aksepterer dere X?", "Do you accept X?"): 1-2 sentences MAX. Start with "Ja" or "Nei" / "Yes" or "No".
+- Single-fact questions ("Hva er åpningstider?", "What is your address?", "Hvor sender dere fra?"): 1-2 sentences. State only the fact.
+- Comparisons: maximum 3 SHORT bullet points per item, 1 line each. No introductions, no conclusions.
+- Product info: first sentence = the answer. Add details only if the user explicitly asks for them.
+- "How do I..." / "Hvordan..." questions: numbered list of steps, 1 line per step. No prose.
+
+DO NOT:
+- Start with filler like "Selvfølgelig", "Of course", "Vi forstår at...", "Great question", "Absolutt".
+- Repeat the user's question back to them.
+- Add background context unless the user asked for it.
+- Write a closing paragraph offering more help. ONE short follow-up sentence is enough — and only when natural.
+- Pad answers with synonyms or restated points.
+
+EXAMPLES (target this style):
+
+User: "Aksepterer dere Vipps?"
+GOOD: "Ja, vi aksepterer Vipps. Beløpet reserveres ved bestilling og trekkes når ordren er ferdig."
+BAD: "Ja, vi aksepterer Vipps som betalingsmetode. Når du betaler med Vipps, blir beløpet reservert på kontoen din, og det trekkes når ordren er ferdig i produksjon. Hvis du har flere spørsmål om betaling med Vipps, er du velkommen til å kontakte oss."
+
+User: "What are your opening hours?"
+GOOD: "Monday to Friday, 08:00–15:30. Closed on weekends."
+BAD: "Our opening hours are Monday to Friday from 08:00 to 15:30. We are closed on Saturdays. If you need to visit outside these hours, please contact us, and we might be able to arrange a later appointment."
+
+User: "Compare Plisse and Rullegardin"
+GOOD:
+"**Plisse:**
+- Flexible — adjusts both up and down
+- Available in light-filtering and blackout textiles
+- Suits irregular window shapes
+
+**Rullegardin:**
+- Simpler operation — rolls up or down
+- Best for full blackout (bedrooms)
+- Needs more space for the roll/cassette
+
+Need a recommendation for a specific room?"
+
+BAD: [Anything over 100 words. Anything with introductory paragraphs.]
+═══════════════════════════════════════════════════════════════
+
+CRITICAL LANGUAGE RULE:
+- Respond ONLY in the language of the USER'S CURRENT (latest) message. Ignore the language of previous messages and ignore the language of retrieved context.
+- Norwegian product names (Rullegardin, Plisse, Lamell) can stay as-is in English responses, but ALL your own sentences must be in English when the user writes in English.
+- User writes English → Your response is English. User writes Norwegian → Your response is Norwegian.
 
 TOOL USAGE RULES:
-- ALWAYS call rag_search FIRST when the user asks about products, services, FAQs, delivery, installation, prices, policies, or any factual question.
-- Use get_order_details or get_order_status ONLY when the user explicitly asks about an order AND provides (or has previously provided) both an order ID and email.
+- ALWAYS call rag_search FIRST when asked about products, services, FAQs, delivery, installation, prices, or policies.
+- Use get_order_details or get_order_status ONLY when the user explicitly asks about an order AND provides both order ID and email.
 - NEVER answer from training data when rag_search returns 'NO_KNOWLEDGE_BASE_DATA'. State plainly that the information is not available and suggest contacting customer service.
 
 CITATION & LINKS:
-- Use ONLY URLs that appear in the retrieved context; do NOT invent or guess URLs.
-- For FAQs with images: If the FAQ context contains an "Image URL" field, include it as a clickable link. For example, if the FAQ mentions a QR code and has an image_url, include: "You can find the QR code here: [QR Code Image](image_url_from_context)".
-- Format product lists in a consistent way: use a numbered list for multiple products, then for each product use bullet points for Category, Description, key attributes (Price, Max width, Features, etc.), and end with a link when available: [More info](url).
-- Example format when a product has a URL in context:
-  1. **Product Name**
-  - Category: X
-  - Description: ...
-  - Price: ... (or "Contact for price")
-  - [More info](https://visor.no/...)
-- Links will be rendered as clickable hyperlinks in the chat. Use the exact URL from the knowledge base.
+- Use ONLY URLs that appear in the retrieved context; do NOT invent URLs.
+- For FAQs with images: include "Image URL" as a clickable markdown link.
+- Format URLs as [link text](url) — they render as hyperlinks in the chat.
 
-Be helpful, professional, and expert-led.`;
+Be helpful, professional, and BRIEF.`;
 
 function getSystemPrompt() {
   return SYSTEM_PROMPT;
 }
 
 // ---------------------------------------------------------------------------
-// TOOL DEFINITIONS — shared between sync and streaming agents.
+// TOOL DEFINITIONS — unchanged
 // ---------------------------------------------------------------------------
 function getToolDefinitions() {
   return [
@@ -114,9 +156,7 @@ function getToolDefinitions() {
 }
 
 // ---------------------------------------------------------------------------
-// KB context heuristics — when KB returns only a generic contact-info FAQ,
-// we treat it as "no real data" and fall back to ticket-based answers.
-// (Copied from visorAgent.js — unchanged.)
+// Below this line: helpers unchanged from previous version
 // ---------------------------------------------------------------------------
 function hasSubstantiveKbContext(ragContext) {
   if (!ragContext || typeof ragContext !== 'string' || ragContext.startsWith('NO_KNOWLEDGE_BASE_DATA')) {
@@ -136,11 +176,6 @@ function hasSubstantiveKbContext(ragContext) {
   return substantiveMarkers.some((m) => c.includes(m));
 }
 
-// ---------------------------------------------------------------------------
-// Sensitive policy detection — block ticket-fallback for these queries because
-// historical tickets may have inconsistent or outdated policy answers.
-// (Copied from visorAgent.js — unchanged.)
-// ---------------------------------------------------------------------------
 function isSensitivePolicyQuery(message) {
   if (!message || typeof message !== 'string') return false;
   const m = message.toLowerCase();
@@ -154,11 +189,6 @@ function isSensitivePolicyQuery(message) {
   return patterns.some((p) => p.test(m));
 }
 
-// ---------------------------------------------------------------------------
-// Re-rank Pinecone results by keyword overlap with the original query.
-// Helps surface chunks that share specific terms even if cosine is similar.
-// (Copied from visorAgent.js — unchanged.)
-// ---------------------------------------------------------------------------
 function reRankByKeywordOverlap(docs, query) {
   if (!Array.isArray(docs) || !query) return docs;
   const queryTokens = String(query).toLowerCase()
@@ -175,18 +205,12 @@ function reRankByKeywordOverlap(docs, query) {
         if (text.includes(tok)) overlap += 1;
       }
       const baseScore = typeof doc?.score === 'number' ? doc.score : 0;
-      // Small overlap bonus — preserves cosine ranking but breaks ties usefully.
       const combined = baseScore + overlap * 0.005;
       return { ...doc, combinedScore: combined };
     })
     .sort((a, b) => (b.combinedScore || 0) - (a.combinedScore || 0));
 }
 
-// ---------------------------------------------------------------------------
-// Sanitize ticket text — strip emails and phone numbers before showing to the
-// model so we never leak old customer PII into a new conversation.
-// (Copied from visorAgent.js — unchanged.)
-// ---------------------------------------------------------------------------
 function sanitizeTicketText(text) {
   if (!text || typeof text !== 'string') return '';
   let cleaned = text;
@@ -195,11 +219,6 @@ function sanitizeTicketText(text) {
   return cleaned;
 }
 
-// ---------------------------------------------------------------------------
-// True if the user query appears in a ticket chunk. Used to detect when
-// a ticket clearly matches the current question.
-// (Copied from visorAgent.js — unchanged.)
-// ---------------------------------------------------------------------------
 function ticketMatchesQuery(ticketText, userQuery) {
   if (!ticketText || !userQuery) return false;
   const norm = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -207,7 +226,6 @@ function ticketMatchesQuery(ticketText, userQuery) {
   const q = norm(userQuery);
   if (!t || !q) return false;
   if (t.includes(q)) return true;
-  // Partial: at least 60% of query tokens appear in the ticket
   const qTokens = q.split(' ').filter((tok) => tok.length >= 3);
   if (qTokens.length === 0) return false;
   let hits = 0;
@@ -217,12 +235,6 @@ function ticketMatchesQuery(ticketText, userQuery) {
   return hits / qTokens.length >= 0.6;
 }
 
-// ---------------------------------------------------------------------------
-// Strip any unsupported-payment-policy hallucinations from the final answer.
-// E.g. the model sometimes claims we offer "Klarna" or "invoice" payments that
-// we don't. This is a safety net for sensitive policy queries.
-// (Copied from visorAgent.js — unchanged.)
-// ---------------------------------------------------------------------------
 function sanitizeUnsupportedPaymentPolicy(answer, userMessage) {
   if (!answer || typeof answer !== 'string') return answer;
   if (!isSensitivePolicyQuery(userMessage || '')) return answer;
@@ -230,7 +242,6 @@ function sanitizeUnsupportedPaymentPolicy(answer, userMessage) {
   const lines = answer.split(/\n/);
   const isNorwegian = /[æøå]/.test(answer) || /\b(jeg|du|vi|ikke)\b/i.test(answer);
 
-  // Lines we filter out — claims about payment plans we don't offer.
   const filtered = lines.filter((line) => {
     const l = line.toLowerCase();
     if (l.includes('klarna')) return false;
