@@ -13,7 +13,7 @@ function AdminPanel({ baseUrl, adminToken }) {
   const [testResponse, setTestResponse] = useState('');
   const [testing, setTesting] = useState(false);
 
-  const apiBaseUrl = baseUrl || 'https://sinkerless-sententially-abrielle.ngrok-free.dev';
+  const apiBaseUrl = baseUrl || 'https://agent.visor.no';
   
   // Get token: prop > localStorage (don't prompt on mount, only when needed)
   const [token, setToken] = useState(() => {

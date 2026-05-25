@@ -3,8 +3,9 @@ import ChatWidget from './components/ChatWidget';
 import './App.css';
 
 function App() {
-  // For standalone app testing, use environment variable or default
-  const baseUrl = process.env.REACT_APP_API_BASE_URL || 'https://ai-agent-hybrid.onrender.com';
+  // For standalone app testing, use environment variable or default to the production agent.
+  // (Previously defaulted to a Render deployment; switched to agent.visor.no when we moved to Lightsail.)
+  const baseUrl = process.env.REACT_APP_API_BASE_URL || 'https://agent.visor.no';
   
   return (
     <div className="App">
