@@ -12,10 +12,18 @@
  *   - Records each successful migration in schema_migrations
  *
  * Safe to run repeatedly — only NEW migrations execute.
+ *
+ * UPDATE: now auto-loads server/.env so DATABASE_URL doesn't have to be
+ * manually exported before running. Matches the pattern used by other
+ * scripts in the repo (e.g. scripts/ingestTickets.js).
  */
 
-const fs = require('fs');
 const path = require('path');
+// Load env vars from server/.env (this file lives at server/db/migrate.js
+// so .env is one directory up).
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+
+const fs = require('fs');
 const { getPool, getClient, query, close } = require('./index');
 
 async function ensureMigrationsTable() {
@@ -59,6 +67,7 @@ async function main() {
   const pool = getPool();
   if (!pool) {
     console.error('[migrate] DATABASE_URL is not set. Cannot run migrations.');
+    console.error('[migrate] Check that server/.env contains DATABASE_URL=postgres://...');
     process.exit(1);
   }
 

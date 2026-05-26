@@ -14,7 +14,15 @@
  *   node server/db/jobs/retentionCleanup.js
  *
  * Output is suitable for piping to a log file.
+ *
+ * UPDATE: now auto-loads server/.env so cron jobs (which don't inherit a
+ * shell env) can find DATABASE_URL.
  */
+
+const path = require('path');
+// Load env vars from server/.env. This file lives at server/db/jobs/, so
+// .env is TWO directories up.
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
 const { query, close } = require('../index');
 
