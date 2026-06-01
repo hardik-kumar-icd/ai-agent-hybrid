@@ -13,7 +13,7 @@
 
 const { ChatOpenAI } = require('@langchain/openai');
 const { HumanMessage, AIMessage, SystemMessage } = require('@langchain/core/messages');
-const { searchSimilar } = require('../utils/embeddingService');
+const { searchSimilar, searchSimilarFiltered } = require('../utils/embeddingService');
 const { searchTickets } = require('../utils/ticketSearch');
 const { classifyQuery } = require('../utils/queryClassifier');
 const { getCachedEmbedding } = require('../utils/embeddingCache');
@@ -32,6 +32,23 @@ const {
 
 const FAST_PATH_MAX_TOKENS = 250;
 const COMPLEX_PATH_MAX_TOKENS = 500;
+
+// Per-source confidence floors. Below these scores, retrieval returns
+// NO_KNOWLEDGE_BASE_DATA instead of weak chunks the agent might synthesize from.
+// Env-tunable without redeploy. See DROP2_FINAL_DESIGN.md.
+const CONFIDENCE_FLOORS = {
+  visor_faqs: parseFloat(process.env.RAG_FLOOR_FAQ || '0.60'),
+  visor_products: parseFloat(process.env.RAG_FLOOR_PRODUCTS || '0.65'),
+  visor_tickets: parseFloat(process.env.RAG_FLOOR_TICKETS || '0.55'),
+  'tickets_fixed.jsonl': parseFloat(process.env.RAG_FLOOR_TICKETS || '0.55'),
+};
+
+const SOURCE_LABELS = {
+  visor_faqs: 'FAQ',
+  visor_products: 'Product catalog',
+  visor_tickets: 'Support ticket history',
+  'tickets_fixed.jsonl': 'Support ticket history',
+};
 
 // ---------------------------------------------------------------------------
 // Trace state — populated during a single request, returned afterwards.
@@ -77,19 +94,80 @@ function pickFastPathModel(docs) {
   return 'gpt-4o-mini';
 }
 
-async function ragRetrieve(query) {
-  const topK = 10;
-  // Snapshot the embedding cache state BEFORE the search so we can detect a hit
-  const cacheHitBefore = getCachedEmbedding(query) !== null;
-  let docs = await searchSimilar(query, topK + 4);
-  docs = reRankByKeywordOverlap(docs, query);
-  docs = docs.slice(0, topK);
+/**
+ * Search a single source and apply its confidence floor.
+ */
+async function searchSourceWithFloor(query, sourceName, topK = 10) {
+  const docs = await searchSimilarFiltered(query, sourceName, topK);
+  if (!docs || docs.length === 0) {
+    return { docs: [], belowFloor: true, bestScore: 0 };
+  }
+  const reranked = reRankByKeywordOverlap(docs, query);
+  const bestScore = reranked[0]?.score || 0;
+  const floor = CONFIDENCE_FLOORS[sourceName] ?? 0.55;
+  if (bestScore < floor) {
+    console.log(`[search:${sourceName}] LOW_CONFIDENCE best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)}`);
+    return { docs: reranked, belowFloor: true, bestScore };
+  }
+  return { docs: reranked, belowFloor: false, bestScore };
+}
 
-  // Record into trace
+/**
+ * Fast-path retrieval — picks best source automatically, optionally biased by category hint.
+ */
+async function ragRetrieve(query, opts = {}) {
+  const cacheHitBefore = getCachedEmbedding(query) !== null;
+  const topK = 10;
+
+  const sourceByCategory = { faqs: 'visor_faqs', product: 'visor_products' };
+  const preferredSource = sourceByCategory[opts.category];
+
+  let mergedDocs = [];
+
+  if (preferredSource) {
+    const { docs, belowFloor } = await searchSourceWithFloor(query, preferredSource, topK);
+    if (!belowFloor && docs.length > 0) {
+      mergedDocs = docs;
+    }
+  }
+
+  if (mergedDocs.length === 0) {
+    const [faqResult, productResult, ticketResult] = await Promise.all([
+      searchSourceWithFloor(query, 'visor_faqs', topK).catch((e) => {
+        console.error('[ragRetrieve] FAQ search error:', e.message);
+        return { docs: [], belowFloor: true, bestScore: 0 };
+      }),
+      searchSourceWithFloor(query, 'visor_products', topK).catch((e) => {
+        console.error('[ragRetrieve] Products search error:', e.message);
+        return { docs: [], belowFloor: true, bestScore: 0 };
+      }),
+      searchTickets(query, topK).then((rawDocs) => {
+        if (!rawDocs || rawDocs.length === 0) {
+          return { docs: [], belowFloor: true, bestScore: 0 };
+        }
+        const reranked = reRankByKeywordOverlap(rawDocs, query);
+        const ticketSource = reranked[0]?.source || 'visor_tickets';
+        const floor = CONFIDENCE_FLOORS[ticketSource] ?? 0.55;
+        const bestScore = reranked[0]?.score || 0;
+        return { docs: reranked, belowFloor: bestScore < floor, bestScore };
+      }).catch((e) => {
+        console.error('[ragRetrieve] Tickets search error:', e.message);
+        return { docs: [], belowFloor: true, bestScore: 0 };
+      }),
+    ]);
+
+    if (!faqResult.belowFloor) mergedDocs.push(...faqResult.docs);
+    if (!productResult.belowFloor) mergedDocs.push(...productResult.docs);
+    if (!ticketResult.belowFloor) mergedDocs.push(...ticketResult.docs);
+
+    mergedDocs.sort((a, b) => (b.score || 0) - (a.score || 0));
+    mergedDocs = mergedDocs.slice(0, topK);
+  }
+
   if (_lastTrace) {
     _lastTrace.searchQuery = query;
     _lastTrace.cacheHit = cacheHitBefore;
-    _lastTrace.docs = docs.map((d, idx) => ({
+    _lastTrace.docs = mergedDocs.map((d, idx) => ({
       chunk_id: d.chunkId || d.chunk_id || null,
       source: d.source || null,
       score: d.score || null,
@@ -98,7 +176,41 @@ async function ragRetrieve(query) {
     }));
   }
 
-  return docs;
+  return mergedDocs;
+}
+
+/**
+ * Search one source for the typed-tool handlers (complex path).
+ */
+async function runTypedSearch(query, sourceName, userMessage) {
+  const { docs, belowFloor } = await searchSourceWithFloor(query, sourceName, 10);
+
+  if (belowFloor || docs.length === 0) {
+    return `NO_KNOWLEDGE_BASE_DATA: No reliable matches in ${SOURCE_LABELS[sourceName] || sourceName} for this query. Do NOT invent information.`;
+  }
+
+  if (_lastTrace) {
+    _lastTrace.docs.push(...docs.map((d, idx) => ({
+      chunk_id: d.chunkId || null,
+      source: d.source || sourceName,
+      score: d.score || null,
+      text: d.text || '',
+      rank: idx + 1,
+    })));
+  }
+
+  const context = docs
+    .map((d, idx) => `[Context ${idx + 1} from ${d.source}]: ${d.text}`)
+    .join('\n\n');
+
+  if (!hasSubstantiveKbContext(context)) {
+    const sensitive = isSensitivePolicyQuery(userMessage);
+    if (!sensitive) {
+      return `NO_KNOWLEDGE_BASE_DATA: Top matches in ${SOURCE_LABELS[sourceName] || sourceName} are generic and don't answer this query directly.`;
+    }
+  }
+
+  return context;
 }
 
 function docsToContext(docs) {
@@ -165,10 +277,10 @@ If the examples are not sufficient, give a best-effort helpful answer and, if ne
 // ===========================================================================
 // FAST PATH
 // ===========================================================================
-async function processFastPath(message, conversationHistory, onToken) {
+async function processFastPath(message, conversationHistory, onToken, opts = {}) {
   _lastPath = 'fast';
 
-  const docs = await ragRetrieve(message);
+  const docs = await ragRetrieve(message, { category: opts.category });
   const context = docsToContext(docs);
 
   if (!context || context.trim().length === 0) return null;
@@ -191,7 +303,7 @@ async function processFastPath(message, conversationHistory, onToken) {
   });
 
   const messages = [
-    new SystemMessage(getSystemPrompt()),
+    new SystemMessage(getSystemPrompt({ category: opts.category })),
     ...recentHistory,
     new HumanMessage(
       `${message}\n\n[Knowledge base context — answer using only this; do not invent details. Keep your answer SHORT — 1-3 sentences for facts, up to 5 bullet points for steps.]\n\n${context}`
@@ -218,10 +330,10 @@ async function processFastPath(message, conversationHistory, onToken) {
 // ===========================================================================
 // COMPLEX PATH
 // ===========================================================================
-async function processComplexPath(message, conversationHistory, onToken) {
+async function processComplexPath(message, conversationHistory, onToken, opts = {}) {
   _lastPath = 'complex';
 
-  const systemPrompt = getSystemPrompt();
+  const systemPrompt = getSystemPrompt({ category: opts.category });
   const toolDefinitions = getToolDefinitions();
 
   const routerModel = new ChatOpenAI({
@@ -292,18 +404,40 @@ async function processComplexPath(message, conversationHistory, onToken) {
       let result = '';
       try {
         switch (functionName) {
-          case 'rag_search': {
-            const ragResult = await ragToolFast(args);
-            const kbHasSubstantive = hasSubstantiveKbContext(ragResult);
-            const sensitive = isSensitivePolicyQuery(message);
-
-            if (!kbHasSubstantive && !sensitive) {
-              const ticketAnswer = await answerFromTicketsFast(message);
-              result = ticketAnswer
-                ? `[Ticket-based answer]\n${ticketAnswer}`
-                : ragResult;
+          case 'search_faq': {
+            result = await runTypedSearch(args.query, 'visor_faqs', message);
+            break;
+          }
+          case 'search_products': {
+            result = await runTypedSearch(args.query, 'visor_products', message);
+            break;
+          }
+          case 'search_tickets': {
+            const rawDocs = await searchTickets(args.query, 10);
+            if (!rawDocs || rawDocs.length === 0) {
+              result = 'NO_KNOWLEDGE_BASE_DATA: No matching tickets found.';
+              break;
+            }
+            const reranked = reRankByKeywordOverlap(rawDocs, args.query);
+            const bestScore = reranked[0]?.score || 0;
+            const ticketSource = reranked[0]?.source || 'visor_tickets';
+            const floor = CONFIDENCE_FLOORS[ticketSource] ?? 0.55;
+            if (bestScore < floor) {
+              console.log(`[search:${ticketSource}] LOW_CONFIDENCE best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)}`);
+              result = 'NO_KNOWLEDGE_BASE_DATA: No tickets matched confidently.';
             } else {
-              result = ragResult;
+              if (_lastTrace) {
+                _lastTrace.docs.push(...reranked.slice(0, 10).map((d, i) => ({
+                  chunk_id: d.chunkId || null,
+                  source: d.source || ticketSource,
+                  score: d.score || null,
+                  text: d.text || '',
+                  rank: i + 1,
+                })));
+              }
+              result = reranked.slice(0, 10)
+                .map((d, idx) => `[Context ${idx + 1} from ${d.source}]: ${d.text}`)
+                .join('\n\n');
             }
             break;
           }
@@ -374,7 +508,7 @@ async function processComplexPath(message, conversationHistory, onToken) {
 // ===========================================================================
 // PUBLIC ENTRY POINT
 // ===========================================================================
-async function processVisorMessageStream(message, conversationHistory = [], onToken = () => {}) {
+async function processVisorMessageStream(message, conversationHistory = [], onToken = () => {}, opts = {}) {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY is not set in environment variables');
   }
@@ -384,12 +518,12 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
 
   if (classification === 'order') {
     _lastPath = 'order';
-    return processComplexPath(message, conversationHistory, onToken);
+    return processComplexPath(message, conversationHistory, onToken, opts);
   }
 
   if (classification === 'fast_path') {
     try {
-      const answer = await processFastPath(message, conversationHistory, onToken);
+      const answer = await processFastPath(message, conversationHistory, onToken, opts);
       if (answer !== null) return answer;
       console.log('[Stream] fast_path empty, falling back to complex');
     } catch (err) {
@@ -397,7 +531,7 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
     }
   }
 
-  return processComplexPath(message, conversationHistory, onToken);
+  return processComplexPath(message, conversationHistory, onToken, opts);
 }
 
 module.exports = {

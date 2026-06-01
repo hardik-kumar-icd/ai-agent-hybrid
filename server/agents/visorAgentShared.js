@@ -73,9 +73,14 @@ CRITICAL LANGUAGE RULE:
 - User writes English → Your response is English. User writes Norwegian → Your response is Norwegian.
 
 TOOL USAGE RULES:
-- ALWAYS call rag_search FIRST when asked about products, services, FAQs, delivery, installation, prices, or policies.
+- For ANY question about Visor.no — products, services, FAQs, delivery, payments, installation, prices, policies — call AT LEAST ONE search_* tool FIRST. Do not answer from training data.
+- Choose the right tool for the question type:
+  - search_faq:      policies, processes, how-to, opening hours, payment methods, returns
+  - search_products: authoritative product specs (dimensions, textiles, prices, comparisons)
+  - search_tickets:  precedent for unusual situations, complaints, defects, edge cases (last resort)
+- You may call multiple search tools in one turn when the question spans categories.
 - Use get_order_details or get_order_status ONLY when the user explicitly asks about an order AND provides both order ID and email.
-- NEVER answer from training data when rag_search returns 'NO_KNOWLEDGE_BASE_DATA'. State plainly that the information is not available and suggest contacting customer service.
+- NEVER invent product specifications. If a search tool returns 'NO_KNOWLEDGE_BASE_DATA', state plainly that the information is not available in the knowledge base, and suggest contacting customer service at kundeservice@visor.no.
 
 CITATION & LINKS:
 - Use ONLY URLs that appear in the retrieved context; do NOT invent URLs.
@@ -84,27 +89,76 @@ CITATION & LINKS:
 
 Be helpful, professional, and BRIEF.`;
 
-function getSystemPrompt() {
-  return SYSTEM_PROMPT;
+/**
+ * Get the system prompt, optionally biased by the widget's entry-point category.
+ *
+ * @param {object} [opts]
+ * @param {'faqs'|'product'|'free'} [opts.category] - Which widget button the user clicked
+ * @returns {string} The system prompt with optional category hint appended
+ */
+function getSystemPrompt(opts = {}) {
+  const category = opts.category || 'free';
+  const hints = {
+    faqs: `
+
+USER CONTEXT (from widget):
+The user clicked the "FAQs" button. They likely want a policy/process/how-to answer.
+Call search_faq FIRST. Only call search_products if the question turns out to require
+specific product specs. Only call search_tickets if neither FAQ nor product search returns
+a confident answer.`,
+    product: `
+
+USER CONTEXT (from widget):
+The user clicked the "Product Info" button. They want product-specific information.
+Call search_products FIRST. Only call search_faq if the question is really about policy
+rather than a product. Only call search_tickets if both fail.`,
+    free: '',
+  };
+  return SYSTEM_PROMPT + (hints[category] || '');
 }
 
 // ---------------------------------------------------------------------------
-// TOOL DEFINITIONS — unchanged
+// TOOL DEFINITIONS — Drop 2 typed tools (replaces single rag_search)
 // ---------------------------------------------------------------------------
 function getToolDefinitions() {
   return [
     {
       type: 'function',
       function: {
-        name: 'rag_search',
-        description: 'Search the knowledge base (products, FAQs, support tickets, delivery, installation, customer service). MANDATORY: Call this tool for EVERY user message that asks a question or requests information. Do not answer without calling this first. Applies in ALL languages (Norwegian, English, etc.). Use a short search query (e.g. key terms: "tilbud frakt", "offer shipping", "measurements plisse"). If the tool returns "NO_KNOWLEDGE_BASE_DATA", do NOT make up information - state that information is not available.',
+        name: 'search_faq',
+        description: 'Search Visor.no FAQs for POLICY, PROCESS, and HOW-TO questions: payment methods, delivery times, returns, measuring guides, mounting instructions, customer service hours, ordering process, opening hours, contact details. Use this for "how do I...", "do you accept...", "what is your..." questions. DOES NOT contain authoritative product dimensions or specifications — use search_products for those.',
         parameters: {
           type: 'object',
           properties: {
-            query: {
-              type: 'string',
-              description: 'The search query about products, FAQs, payment methods, delivery, installation, measurements, specifications, or any customer service related information',
-            },
+            query: { type: 'string', description: "Concise search query in the user's language" },
+          },
+          required: ['query'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'search_products',
+        description: 'Search the Visor.no PRODUCT CATALOG for authoritative product information: exact dimensions (min/max width and height in cm), textile options and groups, color and profile choices, prices, delivery time, slope-window suitability, motorization, product comparisons. ALWAYS use this for any question depending on specific product specs. Returns structured product data sourced from Magento.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: "Concise search query in the user's language" },
+          },
+          required: ['query'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'search_tickets',
+        description: "Search HISTORICAL customer support conversations for precedent on unusual situations, complaints, defects, warranty claims, edge cases, atypical mounting scenarios, or customer-language phrasings that don't match FAQ or product topics directly. Tickets are HISTORICAL and may be outdated — never treat as authoritative for current product specs or policies. Use as a LAST RESORT when search_faq and search_products do not give a confident answer.",
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: "Concise search query in the user's language" },
           },
           required: ['query'],
         },
@@ -118,14 +172,8 @@ function getToolDefinitions() {
         parameters: {
           type: 'object',
           properties: {
-            order_id: {
-              type: 'string',
-              description: 'The order ID, e.g., 5501 or V-9901',
-            },
-            email: {
-              type: 'string',
-              description: "The customer's email address used when placing the order (REQUIRED for security verification)",
-            },
+            order_id: { type: 'string', description: 'The order ID, e.g., 5501 or V-9901' },
+            email: { type: 'string', description: "The customer's email address used when placing the order (REQUIRED for security verification)" },
           },
           required: ['order_id', 'email'],
         },
@@ -139,14 +187,8 @@ function getToolDefinitions() {
         parameters: {
           type: 'object',
           properties: {
-            order_id: {
-              type: 'string',
-              description: "The unique order number provided to the customer (e.g., '12345' or 'V-9901').",
-            },
-            email: {
-              type: 'string',
-              description: 'The email address used when placing the order (REQUIRED for security verification).',
-            },
+            order_id: { type: 'string', description: "The unique order number provided to the customer (e.g., '12345' or 'V-9901')." },
+            email: { type: 'string', description: 'The email address used when placing the order (REQUIRED for security verification).' },
           },
           required: ['order_id', 'email'],
         },
@@ -156,7 +198,7 @@ function getToolDefinitions() {
 }
 
 // ---------------------------------------------------------------------------
-// Below this line: helpers unchanged from previous version
+// Helper functions — unchanged from previous version
 // ---------------------------------------------------------------------------
 function hasSubstantiveKbContext(ragContext) {
   if (!ragContext || typeof ragContext !== 'string' || ragContext.startsWith('NO_KNOWLEDGE_BASE_DATA')) {

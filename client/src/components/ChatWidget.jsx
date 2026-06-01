@@ -236,7 +236,11 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
       try {
         const { fullText } = await streamChat(
           apiBaseUrl,
-          { message: message, conversationId: conversationId },
+          {
+            message: message,
+            conversationId: conversationId,
+            category: selectedOption || 'free',
+          },
           conversationId,
           onToken
         );
@@ -272,7 +276,8 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
           },
           body: JSON.stringify({
             message: message,
-            conversationId: conversationId
+            conversationId: conversationId,
+            category: selectedOption || 'free',
           })
         });
 
@@ -536,7 +541,8 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
             message: orderMessage,
             conversationId: conversationId,
             email: emailValue,
-            order_id: orderIdValue
+            order_id: orderIdValue,
+            category: selectedOption || 'free',
           },
           conversationId,
           onToken
@@ -573,7 +579,8 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
             message: orderMessage,
             conversationId: conversationId,
             email: emailValue,
-            order_id: orderIdValue
+            order_id: orderIdValue,
+            category: selectedOption || 'free',
           })
         });
 

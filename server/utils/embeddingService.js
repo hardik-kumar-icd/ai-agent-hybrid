@@ -198,6 +198,53 @@ async function searchSimilar(query, topK = 10) {
   }
 }
 
+/**
+ * Search for similar vectors in Pinecone, filtered by source.
+ *
+ * Uses Pinecone's server-side metadata filter (faster + always-correct vs.
+ * fetching extra and filtering in memory). Used by the Drop 2 typed-search
+ * tools (search_faq, search_products, search_tickets) to isolate retrieval
+ * by source.
+ *
+ * @param {string} query - Query text
+ * @param {string} sourceName - Source to filter by (e.g. 'visor_faqs', 'visor_products', 'visor_tickets')
+ * @param {number} topK - Number of top results to return
+ * @returns {Promise<Array<{score, text, source, chunkId, metadata}>>}
+ */
+async function searchSimilarFiltered(query, sourceName, topK = 10) {
+  try {
+    const index = await initializePinecone();
+
+    let queryEmbedding = getCachedEmbedding(query);
+    if (!queryEmbedding) {
+      const embeddings = new OpenAIEmbeddings({
+        openAIApiKey: process.env.OPENAI_API_KEY,
+        modelName: 'text-embedding-3-large',
+      });
+      queryEmbedding = await embeddings.embedQuery(query);
+      setCachedEmbedding(query, queryEmbedding);
+    }
+
+    const queryResponse = await index.query({
+      vector: queryEmbedding,
+      topK,
+      includeMetadata: true,
+      filter: { source: { $eq: sourceName } },
+    });
+
+    return (queryResponse.matches || []).map((m) => ({
+      score: m.score,
+      text: m.metadata?.text || '',
+      source: m.metadata?.source || sourceName,
+      chunkId: m.metadata?.chunk_id || m.id,
+      metadata: m.metadata || {},
+    }));
+  } catch (error) {
+    console.error(`[searchSimilarFiltered:${sourceName}] Error:`, error);
+    throw new Error(`Failed to search ${sourceName}: ${error.message}`);
+  }
+}
+
 async function deleteAllVectors(namespace = '') {
   try {
     const index = await initializePinecone();
@@ -220,6 +267,7 @@ async function deleteAllVectors(namespace = '') {
 module.exports = {
   embedAndStore,
   searchSimilar,
+  searchSimilarFiltered,
   initializePinecone,
   deleteAllVectors,
 };

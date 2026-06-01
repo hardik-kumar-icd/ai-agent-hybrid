@@ -8,6 +8,9 @@
  *     the conversation, both messages, and the retrieval trace to Postgres
  *   - Telemetry is wrapped in setImmediate so it never delays the chat response
  *
+ * Drop 2 update: extracts `category` from request body and passes it
+ * through to the agent so the system prompt can be biased per widget entry-point.
+ *
  * Drop-in replacement for server/routes/visorChatStreamRoute.js
  */
 
@@ -53,7 +56,6 @@ function extractEmailFromMessage(message) {
 
 function detectLanguage(message) {
   if (!message) return null;
-  // Norwegian letters or common Norwegian words = nb, else en
   if (/[æøå]/i.test(message)) return 'nb';
   if (/\b(hva|hvor|hvordan|når|hvilke|er|har|vi|du|jeg)\b/i.test(message)) return 'nb';
   return 'en';
@@ -81,6 +83,7 @@ router.get('/', (req, res) => {
       email: 'string (optional)',
       order_id: 'string (optional)',
       conversationId: 'string (optional)',
+      category: "string (optional) - 'faqs' | 'product' | 'free'",
     },
     events: ['meta', 'token', 'done', 'error'],
     note: 'Falls back to /visor-chat if streaming is not supported.',
@@ -96,13 +99,9 @@ router.get('/stats', (req, res) => {
 
 // ---- POST handler ----
 router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
-  // Pre-generate both message IDs upfront. The widget needs the assistant
-  // message id in the meta event (for future feedback). The user message id
-  // is internal but stored for clean PK on the messages table.
   const userMessageId = randomUUID();
   const assistantMessageId = randomUUID();
 
-  // ---- SSE headers ----
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -119,7 +118,6 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
   }, 15000);
   req.on('close', () => clearInterval(heartbeat));
 
-  // Buffer for telemetry (so we don't depend on closure scope after res.end)
   let _userContent = '';
   let _assistantContent = '';
   let _email = null;
@@ -127,10 +125,9 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
   let _language = null;
 
   try {
-    const { message, email, order_id } = req.body;
+    const { message, email, order_id, category } = req.body;
     logApiRequest(req, '/visor-chat/stream');
 
-    // Send meta event with messageId (for the widget's feedback foundation)
     sendSse(res, { type: 'meta', messageId: assistantMessageId, path: 'pending' });
     flush(res);
 
@@ -174,13 +171,13 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
         sendSse(res, { type: 'token', content: token });
         flush(res);
       },
+      { category: category || 'free' },
     );
     const durationMs = Date.now() - startTime;
     const path = getLastExecutionPath();
     const trace = getLastRetrievalTrace();
     _assistantContent = fullText;
 
-    // Persist to session for next turn
     if (req.session.appendToHistory) {
       req.session.appendToHistory('user', enhancedMessage);
       req.session.appendToHistory('assistant', fullText);
@@ -195,10 +192,8 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
     });
     flush(res);
 
-    console.log(`[Stream] path=${path} duration=${durationMs}ms messageId=${assistantMessageId}`);
+    console.log(`[Stream] path=${path} duration=${durationMs}ms messageId=${assistantMessageId} category=${category || 'free'}`);
 
-    // ---- TELEMETRY: fire-and-forget after response is fully sent ----
-    // setImmediate ensures res.end() completes before we touch the DB.
     setImmediate(() => {
       telemetry.logTurn({
         conversationId: req.body.conversationId || req.headers['x-conversation-id'] || null,
