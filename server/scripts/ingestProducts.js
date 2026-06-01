@@ -168,8 +168,13 @@ async function main() {
 
   console.log(`✅ Loaded ${products.length} cleaned products`);
 
-  // Build LangChain-style Document objects
+  // Build LangChain-style Document objects with STABLE IDs.
+  // Using product_id (numeric, always unique per product in Magento) as the
+  // identity, so re-running this script is idempotent — same products get the
+  // same vector IDs, Pinecone upserts (overwrites) rather than appending.
+  // Previous bug: timestamp-based IDs caused 2x duplicate vectors on re-ingest.
   const docs = products.map((p) => ({
+    id: `visor_products_pid_${p.id}`,
     pageContent: buildChunkText(p),
     metadata: buildMetadata(p),
   }));
