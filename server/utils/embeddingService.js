@@ -122,10 +122,14 @@ async function embedAndStore(docs, sourceName) {
         const globalIdx = offset + idx;
         const chunkId = `${sourceName}_chunk_${globalIdx}_${uploadTimestamp}`;
         const storedText = truncateForEmbedding(doc.pageContent || doc);
+        // Merge any extra metadata supplied by the caller (e.g. product fields).
+        // Reserved keys (source, chunk_id, text, upload_timestamp) always win.
+        const customMetadata = (doc && typeof doc === 'object' && doc.metadata) || {};
         return {
           id: chunkId,
           values: embedding,
           metadata: {
+            ...customMetadata,
             source: sourceName,
             chunk_id: chunkId,
             text: storedText,
