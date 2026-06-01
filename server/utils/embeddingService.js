@@ -15,8 +15,13 @@ const { Tiktoken } = require('js-tiktoken/lite');
 const cl100k_base = require('js-tiktoken/ranks/cl100k_base');
 const { getCachedEmbedding, setCachedEmbedding } = require('./embeddingCache');
 
+// Promise-based init: parallel callers all await the SAME Promise and get the
+// same resolved index. Fixes a race where two requests arriving during cold
+// start could see pineconeClient set but pineconeIndex still null, leading to
+// "Cannot read properties of null (reading 'query')" errors.
 let pineconeClient = null;
 let pineconeIndex = null;
+let pineconeInitPromise = null;
 
 async function initializePinecone() {
   if (!process.env.PINECONE_API_KEY) {
@@ -26,57 +31,66 @@ async function initializePinecone() {
     throw new Error('PINECONE_INDEX_NAME is not set in environment variables');
   }
 
-  if (!pineconeClient) {
-    pineconeClient = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
+  if (!pineconeInitPromise) {
+    pineconeInitPromise = (async () => {
+      pineconeClient = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
+      const indexName = process.env.PINECONE_INDEX_NAME;
 
-    const indexName = process.env.PINECONE_INDEX_NAME;
+      try {
+        const indexList = await pineconeClient.listIndexes();
+        const indexExists = indexList.indexes?.some((idx) => idx.name === indexName);
 
-    try {
-      const indexList = await pineconeClient.listIndexes();
-      const indexExists = indexList.indexes?.some((idx) => idx.name === indexName);
-
-      if (!indexExists) {
-        console.log(`Index '${indexName}' not found. Creating new index...`);
-        const dimension = 3072; // text-embedding-3-large
-        await pineconeClient.createIndex({
-          name: indexName,
-          dimension,
-          metric: 'cosine',
-          spec: {
-            serverless: {
-              cloud: 'aws',
-              region: process.env.PINECONE_REGION || 'us-east-1',
+        if (!indexExists) {
+          console.log(`Index '${indexName}' not found. Creating new index...`);
+          const dimension = 3072; // text-embedding-3-large
+          await pineconeClient.createIndex({
+            name: indexName,
+            dimension,
+            metric: 'cosine',
+            spec: {
+              serverless: {
+                cloud: 'aws',
+                region: process.env.PINECONE_REGION || 'us-east-1',
+              },
             },
-          },
-        });
+          });
 
-        console.log(`Index '${indexName}' created. Waiting for it to be ready...`);
-        let ready = false;
-        let attempts = 0;
-        while (!ready && attempts < 30) {
-          await new Promise((r) => setTimeout(r, 1000));
-          const indexes = await pineconeClient.listIndexes();
-          const index = indexes.indexes?.find((idx) => idx.name === indexName);
-          if (index && index.status?.ready) ready = true;
-          attempts += 1;
+          console.log(`Index '${indexName}' created. Waiting for it to be ready...`);
+          let ready = false;
+          let attempts = 0;
+          while (!ready && attempts < 30) {
+            await new Promise((r) => setTimeout(r, 1000));
+            const indexes = await pineconeClient.listIndexes();
+            const index = indexes.indexes?.find((idx) => idx.name === indexName);
+            if (index && index.status?.ready) ready = true;
+            attempts += 1;
+          }
+          if (!ready) {
+            throw new Error(`Index '${indexName}' was created but is not ready yet. Please retry shortly.`);
+          }
+          console.log(`Index '${indexName}' is ready.`);
         }
-        if (!ready) {
-          throw new Error(`Index '${indexName}' was created but is not ready yet. Please retry shortly.`);
+      } catch (error) {
+        if (error.message.includes('404') || error.message.includes('not found')) {
+          console.log('Could not check index existence. Attempting to use index directly...');
+        } else {
+          console.error('Error checking/creating index:', error.message);
         }
-        console.log(`Index '${indexName}' is ready.`);
       }
-    } catch (error) {
-      if (error.message.includes('404') || error.message.includes('not found')) {
-        console.log('Could not check index existence. Attempting to use index directly...');
-      } else {
-        console.error('Error checking/creating index:', error.message);
-      }
-    }
 
-    pineconeIndex = pineconeClient.index(indexName);
+      pineconeIndex = pineconeClient.index(indexName);
+      return pineconeIndex;
+    })().catch((err) => {
+      // If init fails, clear the cached Promise so the next call retries
+      // instead of returning the failed Promise forever.
+      pineconeInitPromise = null;
+      pineconeClient = null;
+      pineconeIndex = null;
+      throw err;
+    });
   }
 
-  return pineconeIndex;
+  return pineconeInitPromise;
 }
 
 const EMBED_BATCH_SIZE = 100;
