@@ -134,7 +134,11 @@ async function embedAndStore(docs, sourceName) {
       const vectorsToUpsert = vectors.map((embedding, idx) => {
         const doc = batch[idx];
         const globalIdx = offset + idx;
-        const chunkId = `${sourceName}_chunk_${globalIdx}_${uploadTimestamp}`;
+        // Stable IDs: if caller supplies doc.id, use it (re-ingestion overwrites
+        // rather than appending duplicates). Otherwise fall back to the legacy
+        // timestamp-based pattern so FAQ/ticket scripts keep working.
+        const callerSuppliedId = doc && typeof doc === 'object' && typeof doc.id === 'string' && doc.id;
+        const chunkId = callerSuppliedId || `${sourceName}_chunk_${globalIdx}_${uploadTimestamp}`;
         const storedText = truncateForEmbedding(doc.pageContent || doc);
         // Merge any extra metadata supplied by the caller (e.g. product fields).
         // Reserved keys (source, chunk_id, text, upload_timestamp) always win.
