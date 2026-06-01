@@ -1,6 +1,6 @@
 const { ChatOpenAI } = require('@langchain/openai');
 const { HumanMessage, AIMessage, SystemMessage } = require('@langchain/core/messages');
-const { searchSimilar } = require('../utils/embeddingService');
+const { searchSimilar, searchSimilarFiltered } = require('../utils/embeddingService');
 const { searchTickets } = require('../utils/ticketSearch');
 const { getOrderDetailsTool } = require('../tools/getOrderDetailsTool');
 const { getOrderStatusTool } = require('../tools/getOrderStatusTool');
@@ -272,7 +272,7 @@ function hasSubstantiveKbContext(ragContext) {
  * @param {string} message - Current user message
  * @param {Array<{ role: 'user'|'assistant', content: string }>} [conversationHistory] - Previous turns for context (e.g. "this product")
  */
-async function processVisorMessage(message, conversationHistory = []) {
+async function processVisorMessage(message, conversationHistory = [], opts = {}) {
   try {
     // Validate API key
     if (!process.env.OPENAI_API_KEY) {
@@ -388,15 +388,40 @@ Be helpful, professional, and expert-led.`;
       {
         type: 'function',
         function: {
-          name: 'rag_search',
-          description: 'Search the knowledge base (products, FAQs, support tickets, delivery, installation, customer service). MANDATORY: Call this tool for EVERY user message that asks a question or requests information. Do not answer without calling this first. Applies in ALL languages (Norwegian, English, etc.). Use a short search query (e.g. key terms: "tilbud frakt", "offer shipping", "measurements plisse"). If the tool returns "NO_KNOWLEDGE_BASE_DATA", do NOT make up information - state that information is not available.',
+          name: 'search_faq',
+          description: 'Search Visor.no FAQs for POLICY, PROCESS, and HOW-TO questions: payment methods, delivery times, returns, measuring guides, mounting instructions, customer service hours, ordering process. DOES NOT contain authoritative product dimensions or specifications — use search_products for those.',
           parameters: {
             type: 'object',
             properties: {
-              query: {
-                type: 'string',
-                description: 'The search query about products, FAQs, payment methods, delivery, installation, measurements, specifications, or any customer service related information'
-              }
+              query: { type: 'string', description: "Concise search query in the user's language" }
+            },
+            required: ['query']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'search_products',
+          description: 'Search the Visor.no PRODUCT CATALOG for authoritative product information: exact dimensions (min/max width and height), textile options, prices, delivery time, product comparisons. ALWAYS use this for any question depending on specific product specs.',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: "Concise search query in the user's language" }
+            },
+            required: ['query']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'search_tickets',
+          description: "Search HISTORICAL customer support conversations for precedent on unusual situations, complaints, defects, edge cases. Tickets are HISTORICAL and may be outdated — never treat as authoritative for current specs or policies. Use as LAST RESORT.",
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: "Concise search query in the user's language" }
             },
             required: ['query']
           }
@@ -525,6 +550,28 @@ Be helpful, professional, and expert-led.`;
           }
 
           switch (functionName) {
+            case 'search_faq': {
+              args.__source = 'visor_faqs';
+              args.__floor = parseFloat(process.env.RAG_FLOOR_FAQ || '0.60');
+              // fall through to shared logic via rag_search
+            }
+            // eslint-disable-next-line no-fallthrough
+            case 'search_products': {
+              if (!args.__source) {
+                args.__source = 'visor_products';
+                args.__floor = parseFloat(process.env.RAG_FLOOR_PRODUCTS || '0.65');
+              }
+              // fall through
+            }
+            // eslint-disable-next-line no-fallthrough
+            case 'search_tickets': {
+              if (!args.__source) {
+                args.__source = 'visor_tickets';
+                args.__floor = parseFloat(process.env.RAG_FLOOR_TICKETS || '0.55');
+              }
+              // fall through
+            }
+            // eslint-disable-next-line no-fallthrough
             case 'rag_search': {
               const ragResult = await ragTool(args);
               const kbHasSubstantive = hasSubstantiveKbContext(ragResult);
