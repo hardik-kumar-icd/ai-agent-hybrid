@@ -48,9 +48,17 @@ function getArg(name, defaultValue = null) {
 }
 
 const LIMIT = parseInt(getArg('--limit', '0'), 10) || 0;
+const MAX_NEW = parseInt(getArg('--max-new', '0'), 10) || 0;
 const INPUT = getArg('--input', DEFAULT_INPUT);
 const OUTPUT = getArg('--output', DEFAULT_OUTPUT);
 const CONCURRENCY = parseInt(getArg('--concurrency', String(DEFAULT_CONCURRENCY)), 10);
+
+// Daily-quota tripwire: when we see this signal in a 429, stop the whole script
+// (don't waste retries — daily quota only resets at midnight UTC).
+const DAILY_QUOTA_HINT = /requests?\s*per\s*day|RPD|daily/i;
+
+// Set by detectDailyQuotaExhausted() — workers check this each iteration and stop.
+let dailyQuotaExhausted = false;
 
 // ============================================================
 // Summarization prompt
@@ -140,6 +148,10 @@ async function callOpenAI(systemPrompt, userPrompt) {
 async function summarizeWithRetry(ticket) {
   let lastErr;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    if (dailyQuotaExhausted) {
+      // Don't even try — daily quota was hit by some other worker
+      throw new Error('DAILY_QUOTA_EXHAUSTED');
+    }
     try {
       const result = await callOpenAI(SYSTEM_PROMPT, buildUserPrompt(ticket));
       return result;
@@ -147,6 +159,20 @@ async function summarizeWithRetry(ticket) {
       lastErr = err;
       // Don't retry on auth errors
       if (err.status === 401 || err.status === 403) throw err;
+
+      // Detect daily quota exhaustion (not a per-minute RPM issue — that's recoverable)
+      if (err.status === 429 && DAILY_QUOTA_HINT.test(err.message)) {
+        if (!dailyQuotaExhausted) {
+          console.error('');
+          console.error('🛑 DAILY QUOTA EXHAUSTED on gpt-4o-mini.');
+          console.error('   The script will stop after in-flight workers finish.');
+          console.error('   Resume tomorrow after midnight UTC.');
+          console.error('');
+          dailyQuotaExhausted = true;
+        }
+        throw err;
+      }
+
       if (attempt < MAX_RETRIES) {
         const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
         console.error(`  ⚠️  ticket ${ticket.ticket_id} attempt ${attempt} failed: ${err.message.slice(0, 100)}. Retrying in ${delay}ms...`);
@@ -215,17 +241,28 @@ async function loadCleanedTickets() {
 }
 
 async function loadAlreadyDoneIds() {
-  // Resume: read existing output file, collect ticket_ids that are already summarized.
+  // Resume: read existing output file, collect ticket_ids that completed SUCCESSFULLY.
+  // Error markers (with `error` field set) are NOT counted as done — they'll be retried.
+  // SKIPPED entries ARE counted (we intentionally dropped them; no point re-summarizing).
   if (!fs.existsSync(OUTPUT)) return new Set();
   const stream = fs.createReadStream(OUTPUT, 'utf-8');
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   const done = new Set();
+  let errorMarkers = 0;
   for await (const line of rl) {
     if (!line.trim()) continue;
     try {
       const obj = JSON.parse(line);
-      if (obj.ticket_id) done.add(String(obj.ticket_id));
+      if (!obj.ticket_id) continue;
+      if (obj.error) {
+        errorMarkers += 1;  // do NOT add to done — will retry
+        continue;
+      }
+      done.add(String(obj.ticket_id));
     } catch {}
+  }
+  if (errorMarkers > 0) {
+    console.log(`🔁 Found ${errorMarkers} error markers from prior run — those tickets will be retried.`);
   }
   return done;
 }
@@ -233,9 +270,10 @@ async function loadAlreadyDoneIds() {
 // ============================================================
 // Concurrency-limited iteration
 // ============================================================
-async function runWithConcurrency(items, worker, concurrency) {
+async function runWithConcurrency(items, worker, concurrency, maxNew) {
   const queue = [...items];
   let completed = 0;
+  let successfulCount = 0;  // tickets that produced a real summary (not skipped, not errored)
   let totalSkipped = 0;
   let totalErrored = 0;
   let totalTokensIn = 0;
@@ -246,18 +284,28 @@ async function runWithConcurrency(items, worker, concurrency) {
 
   async function workerLoop() {
     while (queue.length > 0) {
+      // Stop conditions:
+      // 1. Daily quota hit by any worker — drain
+      if (dailyQuotaExhausted) break;
+      // 2. --max-new budget consumed
+      if (maxNew > 0 && successfulCount >= maxNew) break;
+
       const item = queue.shift();
       if (!item) break;
       try {
         const result = await worker(item);
         if (result.skipped) totalSkipped += 1;
+        else successfulCount += 1;  // a real summary
         if (result.usage) {
           totalTokensIn += result.usage.prompt_tokens || 0;
           totalTokensOut += result.usage.completion_tokens || 0;
         }
       } catch (err) {
         totalErrored += 1;
-        console.error(`❌ ticket ${item.ticket_id}: ${err.message.slice(0, 150)}`);
+        // Only print a single line per error to avoid log spam at the wall
+        if (totalErrored < 20 || totalErrored % 50 === 0) {
+          console.error(`❌ ticket ${item.ticket_id}: ${err.message.slice(0, 150)}`);
+        }
       }
       completed += 1;
 
@@ -266,13 +314,16 @@ async function runWithConcurrency(items, worker, concurrency) {
       if (now - lastReport > 5000) {
         const elapsed = (now - startTime) / 1000;
         const rate = completed / elapsed;
-        const eta = queue.length / Math.max(rate, 0.01);
+        const remaining = queue.length;
+        const eta = remaining / Math.max(rate, 0.01);
         const costSoFar =
           (totalTokensIn / 1_000_000) * 0.15 + (totalTokensOut / 1_000_000) * 0.6;
+        const budgetNote =
+          maxNew > 0 ? ` budget=${successfulCount}/${maxNew}` : '';
         console.log(
-          `  [${completed}/${completed + queue.length}] ${rate.toFixed(1)}/s ` +
-          `eta=${Math.round(eta)}s skipped=${totalSkipped} err=${totalErrored} ` +
-          `cost=$${costSoFar.toFixed(3)}`
+          `  [${completed}/${completed + remaining}] ${rate.toFixed(1)}/s ` +
+          `eta=${Math.round(eta)}s ok=${successfulCount} skipped=${totalSkipped} ` +
+          `err=${totalErrored}${budgetNote} cost=$${costSoFar.toFixed(3)}`
         );
         lastReport = now;
       }
@@ -282,7 +333,7 @@ async function runWithConcurrency(items, worker, concurrency) {
   const workers = Array.from({ length: concurrency }, () => workerLoop());
   await Promise.all(workers);
 
-  return { completed, totalSkipped, totalErrored, totalTokensIn, totalTokensOut };
+  return { completed, successfulCount, totalSkipped, totalErrored, totalTokensIn, totalTokensOut };
 }
 
 // ============================================================
@@ -294,6 +345,7 @@ async function main() {
   console.log(`🤖 Model:  ${MODEL}`);
   console.log(`⚙️  Concurrency: ${CONCURRENCY}`);
   if (LIMIT > 0) console.log(`🔢 Limit:  ${LIMIT} tickets (pre-flight mode)`);
+  if (MAX_NEW > 0) console.log(`📊 Max new: ${MAX_NEW} successful summaries this run (then stop gracefully)`);
   console.log('');
 
   if (!process.env.OPENAI_API_KEY) {
@@ -368,7 +420,7 @@ async function main() {
   }
 
   const startTime = Date.now();
-  const stats = await runWithConcurrency(todo, worker, CONCURRENCY);
+  const stats = await runWithConcurrency(todo, worker, CONCURRENCY, MAX_NEW);
   outStream.end();
 
   const elapsed = (Date.now() - startTime) / 1000;
@@ -379,6 +431,7 @@ async function main() {
   console.log('');
   console.log(`✅ Done in ${Math.round(elapsed)}s`);
   console.log(`   Completed:  ${stats.completed}`);
+  console.log(`   Real summaries: ${stats.successfulCount}`);
   console.log(`   Skipped:    ${stats.totalSkipped} (low-value, dropped)`);
   console.log(`   Errored:    ${stats.totalErrored}`);
   console.log(`   Input tokens:  ${stats.totalTokensIn.toLocaleString()}  ($${costIn.toFixed(3)})`);
@@ -388,11 +441,18 @@ async function main() {
   console.log(`📝 Wrote: ${OUTPUT}`);
   console.log('');
 
-  if (LIMIT > 0) {
+  if (dailyQuotaExhausted) {
+    console.log('🛑 Stopped early due to daily quota exhaustion.');
+    console.log('   Resume tomorrow after midnight UTC by re-running the same command.');
+    console.log('   Error markers from this run will be automatically retried.');
+  } else if (LIMIT > 0) {
     console.log('🔍 Pre-flight complete. Inspect the output before running the full ingestion:');
     console.log(`     head -1 ${OUTPUT} | python3 -m json.tool`);
     console.log(`     wc -l ${OUTPUT}`);
     console.log('   Then re-run without --limit to process the rest (resumable).');
+  } else if (MAX_NEW > 0 && stats.successfulCount >= MAX_NEW) {
+    console.log(`📊 Reached --max-new budget of ${MAX_NEW} successful summaries.`);
+    console.log('   To continue, re-run the same command (resumes from where we left off).');
   } else {
     console.log('Next: node server/scripts/ingestTickets.js');
   }
