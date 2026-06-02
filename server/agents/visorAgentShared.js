@@ -112,6 +112,16 @@ USER CONTEXT (from widget):
 The user clicked the "Product Info" button. They want product-specific information.
 Call search_products FIRST. Only call search_faq if the question is really about policy
 rather than a product. Only call search_tickets if both fail.`,
+    order: `
+
+USER CONTEXT (from widget):
+The user clicked the "Order Status" button or asked an order question. This category
+is normally handled by direct-dispatch at the route level before reaching this prompt,
+so if you're seeing it here something fell through. When the user's message contains
+both an order_id and an email (or the [Context: ...] annotation shows them), call
+get_order_status IMMEDIATELY for live Magento data. Do NOT call get_order_details
+(its data is a cache and may be stale). Do NOT refuse — the order_id and email have
+already been validated upstream.`,
     free: '',
   };
   return SYSTEM_PROMPT + (hints[category] || '');

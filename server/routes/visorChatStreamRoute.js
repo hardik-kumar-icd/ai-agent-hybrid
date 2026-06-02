@@ -27,6 +27,12 @@ const { sessionMiddleware } = require('../middlewares/session');
 const { logApiRequest, logOrderLookup } = require('../utils/securityLogger');
 const { getCacheStats } = require('../utils/embeddingCache');
 const telemetry = require('../services/telemetryService');
+const { getOrderStatusTool } = require('../tools/getOrderStatusTool');
+const {
+  formatOrderStatusNorwegian,
+  formatOrderErrorNorwegian,
+  streamTextAsTokens,
+} = require('../utils/orderResponseFormatter');
 
 // ---- Order/email extraction helpers (unchanged) ----
 function extractOrderIdFromMessage(message) {
@@ -83,7 +89,7 @@ router.get('/', (req, res) => {
       email: 'string (optional)',
       order_id: 'string (optional)',
       conversationId: 'string (optional)',
-      category: "string (optional) - 'faqs' | 'product' | 'free'",
+      category: "string (optional) - 'faqs' | 'product' | 'order' | 'free'",
     },
     events: ['meta', 'token', 'done', 'error'],
     note: 'Falls back to /visor-chat if streaming is not supported.',
@@ -152,6 +158,100 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
     if (finalOrderId && finalEmail) {
       logOrderLookup(finalOrderId, finalEmail, '[Visor Stream] Order lookup');
     }
+
+    // -----------------------------------------------------------------------
+    // PR #15: Direct-dispatch fast path for category=order
+    //
+    // When the widget Order Status button is clicked (category='order') AND
+    // both order_id + email are present, we skip the LLM router entirely and
+    // call the Magento order tool directly. This:
+    //   - Eliminates 1-2s of LLM router latency
+    //   - Always returns live data (no stale cache)
+    //   - Cannot misroute (LLM occasionally refused valid order queries)
+    //
+    // Falls through to the agent for: category!='order', missing order/email,
+    // or to recover when extraction worked but category wasn't set explicitly.
+    // -----------------------------------------------------------------------
+    if (category === 'order' && finalOrderId && finalEmail) {
+      const directStart = Date.now();
+      let directText = '';
+      let directOk = false;
+
+      try {
+        const orderData = await getOrderStatusTool({
+          order_id: finalOrderId,
+          email: finalEmail,
+        });
+        // orderData = { id, status, tracking, delivery_date }  (sanitized)
+        directText = formatOrderStatusNorwegian(orderData);
+        directOk = true;
+      } catch (err) {
+        directText = formatOrderErrorNorwegian(err);
+        // directOk stays false — telemetry will record this as a failed direct dispatch
+      }
+
+      // Stream the response token-by-token so the customer experience matches LLM output
+      await streamTextAsTokens(res, directText, sendSse, flush);
+
+      _assistantContent = directText;
+      const directDuration = Date.now() - directStart;
+
+      if (req.session.appendToHistory) {
+        req.session.appendToHistory('user', message);
+        req.session.appendToHistory('assistant', directText);
+      }
+
+      sendSse(res, {
+        type: 'done',
+        content: directText,
+        messageId: assistantMessageId,
+        path: 'order_direct',
+        durationMs: directDuration,
+      });
+      flush(res);
+
+      console.log(`[Stream] path=order_direct ok=${directOk} duration=${directDuration}ms messageId=${assistantMessageId}`);
+
+      // Telemetry — log this as a direct-dispatch turn
+      setImmediate(() => {
+        telemetry.logTurn({
+          conversationId: req.body.conversationId || req.headers['x-conversation-id'] || null,
+          user: {
+            messageId: userMessageId,
+            content: _userContent,
+            email: _email,
+            orderId: _orderId,
+            language: _language,
+            userAgent: req.headers['user-agent'] || null,
+          },
+          assistant: {
+            messageId: assistantMessageId,
+            content: _assistantContent,
+            language: _language,
+            path: 'order_direct',
+            model: null,                                          // no LLM was called
+            toolCalls: ['get_order_status'],
+            embeddingCached: null,
+            latencyMs: directDuration,
+            tokenCount: null,
+          },
+          retrieval: {
+            query: null,                                          // no RAG retrieval
+            chunks: [],
+          },
+        }).catch((err) => {
+          console.error('[Telemetry] async failure (order_direct):', err?.message);
+        });
+      });
+
+      clearInterval(heartbeat);
+      res.end();
+      return;
+    }
+    // -----------------------------------------------------------------------
+    // End PR #15 direct-dispatch block.
+    // Below: existing flow unchanged (LLM-driven via processVisorMessageStream).
+    // -----------------------------------------------------------------------
 
     let enhancedMessage = message;
     if (finalOrderId || finalEmail) {
