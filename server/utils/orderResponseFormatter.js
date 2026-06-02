@@ -17,25 +17,55 @@
 
 const CUSTOMER_SERVICE_EMAIL = 'kundeservice@visor.no';
 
-// Magento order status codes → friendly Norwegian labels.
-// Codes from a standard Magento 2 install. Unknown codes pass through raw.
+// Order status codes → customer-facing Norwegian labels.
+// Source: Visor's Magento Stores → Settings → Order Status (2026-06-02).
+// Codes are CASE-SENSITIVE in Magento. We normalize by lowercasing the
+// lookup key and storing all keys lowercase here.
 const STATUS_LABELS_NO = {
-  pending: 'Venter på behandling',
-  pending_payment: 'Venter på betaling',
-  processing: 'Behandles',
-  complete: 'Fullført',
-  closed: 'Lukket',
-  canceled: 'Kansellert',
-  holded: 'På vent',
-  payment_review: 'Betaling under vurdering',
-  fraud: 'Krever manuell sjekk',
-  pending_paypal: 'Venter på PayPal',
+  // ---- Standard Magento statuses ----
+  pending: 'Pending',
+  pending_payment: 'Pending Payment',
+  pending_paypal: 'Pending PayPal',
+  payment_review: 'Payment Review',
+  processing: 'Sendt produksjon',
+  holded: 'On Hold',
+  complete: 'Ventende forsendelse',
+  closed: 'Slettet',
+  canceled: 'Canceled',
+  fraud: 'Suspected Fraud',
+  paypal_reversed: 'PayPal Reversed',
+  paypal_canceled_reversal: 'PayPal Canceled Reversal',
+  dintero_pending_approval: 'Dintero Pending Approval',
+
+  // ---- Visor custom production-workflow statuses ----
+  produseres_ds: 'Produseres DS',
+  produseres_dm: 'Produseres DM',
+  produseres_dl: 'Produseres DL',
+  produseres_ks: 'Produseres KS',
+  produseres_ff: 'Produseres FF',
+  produseres_na: 'Produseres NA',
+  produseres_su: 'Produseres SU',
+  produseres_ava: 'Produksjon Hentepakke',
+  ventende_produksjon: 'Ventende produksjon',
+  utsatt_sending: 'Kunde bedt om utsatt utgående',
+  sendt_fra_fabrikken: 'Sendt fra fabrikken',
+  overforing: 'Overføring',
+  delivered: 'Levert',
+  levert_2019: 'Levert 2019',
+  levert_2018: 'Levert 2018',
 };
 
 function friendlyStatusNorwegian(status) {
   if (!status) return 'Ukjent';
   const key = String(status).toLowerCase().trim();
-  return STATUS_LABELS_NO[key] || status;
+  if (STATUS_LABELS_NO[key]) return STATUS_LABELS_NO[key];
+  // Fallback: humanize unknown codes (e.g. 'some_new_status' → 'Some New Status').
+  // Better than dumping the raw code to the customer.
+  return key
+    .split('_')
+    .filter((p) => p.length > 0)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(' ');
 }
 
 /**
@@ -62,16 +92,26 @@ function formatOrderStatusNorwegian(orderData) {
     lines.push(`Forventet levering: ${deliveryDate}.`);
   }
 
-  // Closing line — varies by status
+  // Closing line — varies by status. Visor's semantics differ from stock Magento:
+  // 'complete' means "Ventende forsendelse" (awaiting shipment), NOT "Fullført".
+  // 'delivered' is the actual end state.
   const key = String(orderData.status || '').toLowerCase();
-  if (key === 'complete') {
-    lines.push('Ordren er ferdig behandlet og sendt.');
+  if (key === 'delivered' || key === 'levert_2019' || key === 'levert_2018') {
+    lines.push('Ordren er levert.');
+  } else if (key === 'complete') {
+    lines.push('Ordren er klar og venter på forsendelse.');
+  } else if (key === 'sendt_fra_fabrikken') {
+    lines.push('Ordren er sendt fra fabrikken og er på vei.');
+  } else if (key.startsWith('produseres_') || key === 'ventende_produksjon') {
+    lines.push('Vi jobber med ordren din.');
   } else if (key === 'processing') {
-    lines.push('Vi jobber med ordren din nå.');
-  } else if (key === 'pending' || key === 'pending_payment') {
+    lines.push('Ordren er sendt til produksjon.');
+  } else if (key === 'pending' || key === 'pending_payment' || key === 'pending_paypal' || key === 'dintero_pending_approval') {
     lines.push('Ordren venter på neste steg i prosessen.');
   } else if (key === 'canceled' || key === 'closed') {
     lines.push(`Ta kontakt med ${CUSTOMER_SERVICE_EMAIL} hvis du har spørsmål om denne ordren.`);
+  } else if (key === 'utsatt_sending') {
+    lines.push('Sendingen er utsatt på forespørsel.');
   }
 
   return lines.join('\n\n');
