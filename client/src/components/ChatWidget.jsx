@@ -111,6 +111,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
   const [orderEmail, setOrderEmail] = useState('');
   const [orderId, setOrderId] = useState('');
   const [showOptionsAgain, setShowOptionsAgain] = useState(false);
+  const [optionsExpanded, setOptionsExpanded] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const lastMessageRef = useRef(null);
@@ -173,11 +174,12 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     return () => clearTimeout(t);
   }, [messages, isLoading, isOpen, showOptionsAgain]);
 
-  // Delay showing options after order response to let user read the message first
+  // Delay showing options after order response to let user read the message first.
+  // Also reset the expanded state so the capsule starts collapsed each time
+  // options reappear (PR #16).
   useEffect(() => {
-    if (showOptionsAgain) {
-      // Don't auto-scroll when options appear - let user see the response
-      // User can scroll down if they want to see options
+    if (!showOptionsAgain) {
+      setOptionsExpanded(false);
     }
   }, [showOptionsAgain]);
 
@@ -236,11 +238,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
       try {
         const { fullText } = await streamChat(
           apiBaseUrl,
-          {
-            message: message,
-            conversationId: conversationId,
-            category: selectedOption || 'free',
-          },
+          { message: message, conversationId: conversationId },
           conversationId,
           onToken
         );
@@ -276,8 +274,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
           },
           body: JSON.stringify({
             message: message,
-            conversationId: conversationId,
-            category: selectedOption || 'free',
+            conversationId: conversationId
           })
         });
 
@@ -541,8 +538,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
             message: orderMessage,
             conversationId: conversationId,
             email: emailValue,
-            order_id: orderIdValue,
-            category: selectedOption || 'free',
+            order_id: orderIdValue
           },
           conversationId,
           onToken
@@ -579,8 +575,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
             message: orderMessage,
             conversationId: conversationId,
             email: emailValue,
-            order_id: orderIdValue,
-            category: selectedOption || 'free',
+            order_id: orderIdValue
           })
         });
 
@@ -770,49 +765,67 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                   );
                 })}
                 {showOptionsAgain && !selectedOption && (
-                  <div className="chat-options-container compact">
-                    <p className="chat-options-prompt">
-                      {conversationLanguage === 'en'
-                        ? 'Please select an option:'
-                        : 'Vennligst velg et alternativ:'}
-                    </p>
-                    <div className="chat-options-buttons">
-                      <button
-                        className="chat-option-btn"
-                        onClick={() => handleOptionSelect('faqs')}
-                      >
-                        {conversationLanguage === 'en'
-                          ? 'FAQs, frequently asked questions and answers'
-                          : 'FAQs, stilte spørsmål og svar'}
-                      </button>
-                      <button
-                        className="chat-option-btn"
-                        onClick={() => handleOptionSelect('product')}
-                      >
-                        {conversationLanguage === 'en' ? 'Product Info' : 'Produktinfo'}
-                      </button>
-                      <button
-                        className="chat-option-btn"
-                        onClick={() => handleOptionSelect('order')}
-                      >
-                        {conversationLanguage === 'en' ? 'Order Status' : 'Ordrestatus'}
-                      </button>
-                      <button
-                        className="chat-option-btn"
-                        onClick={() => handleOptionSelect('install_guides')}
-                      >
-                        {conversationLanguage === 'en'
-                          ? 'Installation guides'
-                          : 'Monteringsveiledninger'}
-                      </button>
-                      <button
-                        className="chat-option-btn"
-                        onClick={() => handleOptionSelect('guides')}
-                      >
-                        {conversationLanguage === 'en' ? 'How do I order?' : 'Hvordan bestiller jeg?'}
-                      </button>
-                    </div>
-                  </div>
+                  <>
+                    {!optionsExpanded ? (
+                      <div className="chat-options-trigger">
+                        <button
+                          className="chat-options-capsule"
+                          onClick={() => setOptionsExpanded(true)}
+                          aria-expanded="false"
+                          aria-label={conversationLanguage === 'en' ? 'Show options' : 'Vis alternativer'}
+                        >
+                          <span className="chat-options-capsule-text">
+                            {conversationLanguage === 'en' ? 'Show options' : 'Vis alternativer'}
+                          </span>
+                          <span className="chat-options-capsule-chevron" aria-hidden="true">▾</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="chat-options-container compact expanded">
+                        <p className="chat-options-prompt">
+                          {conversationLanguage === 'en'
+                            ? 'Please select an option:'
+                            : 'Vennligst velg et alternativ:'}
+                        </p>
+                        <div className="chat-options-buttons">
+                          <button
+                            className="chat-option-btn"
+                            onClick={() => handleOptionSelect('faqs')}
+                          >
+                            {conversationLanguage === 'en'
+                              ? 'FAQs, frequently asked questions and answers'
+                              : 'FAQs, stilte spørsmål og svar'}
+                          </button>
+                          <button
+                            className="chat-option-btn"
+                            onClick={() => handleOptionSelect('product')}
+                          >
+                            {conversationLanguage === 'en' ? 'Product Info' : 'Produktinfo'}
+                          </button>
+                          <button
+                            className="chat-option-btn"
+                            onClick={() => handleOptionSelect('order')}
+                          >
+                            {conversationLanguage === 'en' ? 'Order Status' : 'Ordrestatus'}
+                          </button>
+                          <button
+                            className="chat-option-btn"
+                            onClick={() => handleOptionSelect('install_guides')}
+                          >
+                            {conversationLanguage === 'en'
+                              ? 'Installation guides'
+                              : 'Monteringsveiledninger'}
+                          </button>
+                          <button
+                            className="chat-option-btn"
+                            onClick={() => handleOptionSelect('guides')}
+                          >
+                            {conversationLanguage === 'en' ? 'How do I order?' : 'Hvordan bestiller jeg?'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
                 {(selectedOption === 'order' || selectedOption === 'install_guides') && messages.length > 0 && (
                   <div className="chat-order-form">
