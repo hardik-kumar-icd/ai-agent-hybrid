@@ -538,7 +538,8 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
             message: orderMessage,
             conversationId: conversationId,
             email: emailValue,
-            order_id: orderIdValue
+            order_id: orderIdValue,
+            category: 'order'
           },
           conversationId,
           onToken
@@ -575,7 +576,8 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
             message: orderMessage,
             conversationId: conversationId,
             email: emailValue,
-            order_id: orderIdValue
+            order_id: orderIdValue,
+            category: 'order'
           })
         });
 
