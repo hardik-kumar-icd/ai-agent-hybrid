@@ -501,3 +501,86 @@
     height: 48px;
   }
 }
+/* =============================================================================
+ * PR #16 — Capsule trigger for post-answer options menu
+ * Append these rules to ChatWidget.css
+ * =============================================================================
+ *
+ * What this adds:
+ *   .chat-options-trigger        Wrapper that centers the capsule in the chat flow
+ *   .chat-options-capsule        The pill/chip button itself
+ *   .chat-options-capsule-text   The "Vis alternativer" / "Show options" label
+ *   .chat-options-capsule-chevron  The ▾ icon
+ *
+ * Also adds a subtle slide-in animation when the user expands the menu via the
+ * capsule, distinct from the initial welcome menu (which keeps slideInUp).
+ * =============================================================================
+ */
+
+.chat-options-trigger {
+  display: flex;
+  justify-content: center;
+  padding: 6px 16px 4px;
+  margin-top: 2px;
+  animation: capsule-fade-in 0.2s ease-out;
+}
+
+.chat-options-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px 7px 16px;
+  background: rgba(102, 126, 234, 0.08);
+  border: 1px solid rgba(102, 126, 234, 0.22);
+  border-radius: 999px;
+  color: var(--widget-primary-color, #667eea);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  user-select: none;
+  font-family: inherit;
+}
+
+.chat-options-capsule:hover {
+  background: rgba(102, 126, 234, 0.14);
+  border-color: rgba(102, 126, 234, 0.35);
+}
+
+.chat-options-capsule:active {
+  transform: scale(0.97);
+}
+
+.chat-options-capsule:focus-visible {
+  outline: 2px solid var(--widget-primary-color, #667eea);
+  outline-offset: 2px;
+}
+
+.chat-options-capsule-text {
+  white-space: nowrap;
+}
+
+.chat-options-capsule-chevron {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1;
+  transform: translateY(-1px);
+  opacity: 0.85;
+}
+
+@keyframes capsule-fade-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* When capsule is clicked and the full menu expands, use a tighter
+   slide-in than the initial welcome menu to feel like a quick reveal. */
+.chat-options-container.compact.expanded {
+  animation: chat-options-expand 0.18s ease-out;
+}
+
+@keyframes chat-options-expand {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
