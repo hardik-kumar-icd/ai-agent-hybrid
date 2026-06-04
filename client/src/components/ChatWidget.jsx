@@ -739,7 +739,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                             className="chat-option-btn"
                             onClick={() => handleOptionSelect('guides')}
                           >
-                            {conversationLanguage === 'en' ? 'How do I order?' : 'Hvordan bestiller jeg?'}
+                            {conversationLanguage === 'en' ? 'How to order' : 'Slik bestiller du'}
                           </button>
                         </div>
                       </div>
@@ -822,7 +822,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                             className="chat-option-btn"
                             onClick={() => handleOptionSelect('guides')}
                           >
-                            {conversationLanguage === 'en' ? 'How do I order?' : 'Hvordan bestiller jeg?'}
+                            {conversationLanguage === 'en' ? 'How to order' : 'Slik bestiller du'}
                           </button>
                         </div>
                       </div>
