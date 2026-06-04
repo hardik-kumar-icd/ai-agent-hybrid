@@ -112,6 +112,9 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
   const [orderId, setOrderId] = useState('');
   const [showOptionsAgain, setShowOptionsAgain] = useState(false);
   const [optionsExpanded, setOptionsExpanded] = useState(false);
+  // Drop 3 — Feedback state. Map of messageId → {rating, tags, comment, expanded, submitted}
+  // Only kept in memory; lost on widget close (session-locked editing per Visor spec).
+  const [feedbackByMessageId, setFeedbackByMessageId] = useState({});
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const lastMessageRef = useRef(null);
@@ -194,6 +197,121 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // ---------------------------------------------------------------------------
+  // Drop 3 — Feedback helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Attach a server-issued messageId to the most recent assistant message in
+   * state. Called after a streaming response completes so the feedback bar can
+   * render with a real ID to send to /api/feedback.
+   */
+  const attachMessageIdToLastAssistant = (messageId) => {
+    if (!messageId) return;
+    setMessages(prev => {
+      const next = prev.slice();
+      // Walk backwards looking for the last assistant message lacking a messageId
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i].role === 'assistant' && !next[i].messageId) {
+          next[i] = { ...next[i], messageId };
+          return next;
+        }
+      }
+      return next;
+    });
+  };
+
+  /**
+   * Submit feedback to the server. Optimistic UI: state is set immediately so
+   * the UI feels instant; if the server rejects, we revert by clearing the
+   * relevant fields. Network failures are silently retried at the next user
+   * action; we don't surface them to the customer (feedback is best-effort).
+   */
+  const submitFeedback = async (messageId, rating, tags = null, comment = null) => {
+    if (!messageId || !conversationId) return;
+
+    // Optimistic local update
+    setFeedbackByMessageId(prev => ({
+      ...prev,
+      [messageId]: {
+        ...(prev[messageId] || {}),
+        rating,
+        tags,
+        comment,
+        isSubmitting: true,
+      },
+    }));
+
+    try {
+      const apiBaseUrl = baseUrl || 'https://agent.visor.no';
+      const response = await fetch(`${apiBaseUrl}/api/feedback`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Conversation-Id': conversationId,
+        },
+        body: JSON.stringify({
+          messageId,
+          conversationId,
+          rating,
+          tags,
+          comment,
+        }),
+      });
+
+      if (!response.ok) {
+        // Revert optimistic state on validation failure
+        setFeedbackByMessageId(prev => {
+          const next = { ...prev };
+          delete next[messageId];
+          return next;
+        });
+        return;
+      }
+
+      setFeedbackByMessageId(prev => ({
+        ...prev,
+        [messageId]: {
+          ...(prev[messageId] || {}),
+          rating,
+          tags,
+          comment,
+          isSubmitting: false,
+          submitted: true,
+        },
+      }));
+    } catch (e) {
+      // Network failure — keep the optimistic state but mark as not submitted so
+      // a retry on the next action could fire
+      setFeedbackByMessageId(prev => ({
+        ...prev,
+        [messageId]: {
+          ...(prev[messageId] || {}),
+          isSubmitting: false,
+        },
+      }));
+    }
+  };
+
+  // Available tags for thumbs-down feedback. Keep these strings in sync with
+  // ALLOWED_TAGS_NB / ALLOWED_TAGS_EN in server/services/feedbackService.js.
+  const FEEDBACK_TAGS_NB = [
+    'Feil informasjon',
+    'Ikke hjelpsomt',
+    'For langt',
+    'Mangler informasjon',
+    'Feil språk',
+    'Annet',
+  ];
+  const FEEDBACK_TAGS_EN = [
+    'Incorrect info',
+    'Not helpful',
+    'Too long',
+    'Missing information',
+    'Wrong language',
+    'Other',
+  ];
+
   const sendMessage = async () => {
     const message = inputValue.trim();
     if (!message || isLoading) return;
@@ -236,19 +354,20 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
 
       let streamed = false;
       try {
-        const { fullText } = await streamChat(
+        const { fullText, messageId } = await streamChat(
           apiBaseUrl,
           { message: message, conversationId: conversationId },
           conversationId,
           onToken
         );
         streamed = true;
-        // Replace partial content with server-authoritative full text
+        // Replace partial content with server-authoritative full text AND attach
+        // the server-issued messageId so the feedback bar can submit.
         setMessages(prev => {
           const next = prev.slice();
           const last = next[next.length - 1];
           if (last && last.role === 'assistant') {
-            next[next.length - 1] = { ...last, content: fullText };
+            next[next.length - 1] = { ...last, content: fullText, messageId };
           }
           return next;
         });
@@ -532,7 +651,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
 
       let streamed = false;
       try {
-        const { fullText } = await streamChat(
+        const { fullText, messageId } = await streamChat(
           apiBaseUrl,
           {
             message: orderMessage,
@@ -549,7 +668,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
           const next = prev.slice();
           const last = next[next.length - 1];
           if (last && last.role === 'assistant') {
-            next[next.length - 1] = { ...last, content: fullText };
+            next[next.length - 1] = { ...last, content: fullText, messageId };
           }
           return next;
         });
@@ -748,6 +867,10 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                 )}
                 {messages.map((msg, idx) => {
                   const isLastAssistantMessage = idx === messages.length - 1 && msg.role === 'assistant';
+                  // Drop 3 — show feedback bar for assistant messages that have a server-issued messageId
+                  const showFeedback = msg.role === 'assistant' && msg.messageId && msg.content;
+                  const fbState = msg.messageId ? feedbackByMessageId[msg.messageId] : null;
+                  const tagOptions = conversationLanguage === 'en' ? FEEDBACK_TAGS_EN : FEEDBACK_TAGS_NB;
                   return (
                     <div key={idx} ref={isLastAssistantMessage ? lastMessageRef : null}>
                       <ChatMessage
@@ -763,6 +886,135 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                         videoEmbeds={msg.videoEmbeds || null}
                         productLinks={msg.productLinks || null}
                       />
+                      {showFeedback && (
+                        <div className="chat-feedback-bar">
+                          <div className="chat-feedback-thumbs">
+                            <button
+                              type="button"
+                              className={`chat-feedback-thumb ${fbState?.rating === 'up' ? 'active up' : ''}`}
+                              onClick={() => submitFeedback(msg.messageId, 'up')}
+                              aria-label={conversationLanguage === 'en' ? 'Helpful' : 'Nyttig'}
+                              title={conversationLanguage === 'en' ? 'Helpful' : 'Nyttig'}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M7 10v12"/>
+                                <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H7"/>
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              className={`chat-feedback-thumb ${fbState?.rating === 'down' ? 'active down' : ''}`}
+                              onClick={() => {
+                                // Open the tag picker; submit happens after user confirms
+                                setFeedbackByMessageId(prev => ({
+                                  ...prev,
+                                  [msg.messageId]: {
+                                    ...(prev[msg.messageId] || {}),
+                                    rating: 'down',
+                                    expanded: true,
+                                    tags: prev[msg.messageId]?.tags || [],
+                                  },
+                                }));
+                              }}
+                              aria-label={conversationLanguage === 'en' ? 'Not helpful' : 'Ikke nyttig'}
+                              title={conversationLanguage === 'en' ? 'Not helpful' : 'Ikke nyttig'}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M17 14V2"/>
+                                <path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H17"/>
+                              </svg>
+                            </button>
+                            {fbState?.submitted && (
+                              <span className="chat-feedback-thanks">
+                                {conversationLanguage === 'en' ? 'Thanks!' : 'Takk!'}
+                              </span>
+                            )}
+                          </div>
+                          {fbState?.expanded && fbState?.rating === 'down' && (
+                            <div className="chat-feedback-details">
+                              <p className="chat-feedback-prompt">
+                                {conversationLanguage === 'en' ? 'What went wrong?' : 'Hva var feil?'}
+                              </p>
+                              <div className="chat-feedback-tags">
+                                {tagOptions.map(tag => {
+                                  const isSelected = (fbState.tags || []).includes(tag);
+                                  return (
+                                    <button
+                                      key={tag}
+                                      type="button"
+                                      className={`chat-feedback-tag ${isSelected ? 'selected' : ''}`}
+                                      onClick={() => {
+                                        setFeedbackByMessageId(prev => {
+                                          const cur = prev[msg.messageId] || {};
+                                          const curTags = cur.tags || [];
+                                          const newTags = curTags.includes(tag)
+                                            ? curTags.filter(t => t !== tag)
+                                            : [...curTags, tag];
+                                          return {
+                                            ...prev,
+                                            [msg.messageId]: { ...cur, tags: newTags },
+                                          };
+                                        });
+                                      }}
+                                    >
+                                      {tag}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <textarea
+                                className="chat-feedback-comment"
+                                placeholder={conversationLanguage === 'en' ? 'Tell us more (optional)' : 'Fortell mer (valgfritt)'}
+                                maxLength={500}
+                                value={fbState.comment || ''}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setFeedbackByMessageId(prev => ({
+                                    ...prev,
+                                    [msg.messageId]: { ...(prev[msg.messageId] || {}), comment: v },
+                                  }));
+                                }}
+                              />
+                              <div className="chat-feedback-actions">
+                                <button
+                                  type="button"
+                                  className="chat-feedback-cancel"
+                                  onClick={() => {
+                                    setFeedbackByMessageId(prev => {
+                                      const cur = prev[msg.messageId] || {};
+                                      return {
+                                        ...prev,
+                                        [msg.messageId]: { ...cur, expanded: false },
+                                      };
+                                    });
+                                  }}
+                                >
+                                  {conversationLanguage === 'en' ? 'Cancel' : 'Avbryt'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="chat-feedback-submit"
+                                  onClick={() => {
+                                    submitFeedback(
+                                      msg.messageId,
+                                      'down',
+                                      fbState.tags && fbState.tags.length > 0 ? fbState.tags : null,
+                                      fbState.comment || null
+                                    );
+                                    setFeedbackByMessageId(prev => ({
+                                      ...prev,
+                                      [msg.messageId]: { ...(prev[msg.messageId] || {}), expanded: false },
+                                    }));
+                                  }}
+                                  disabled={fbState.isSubmitting}
+                                >
+                                  {conversationLanguage === 'en' ? 'Submit' : 'Send'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

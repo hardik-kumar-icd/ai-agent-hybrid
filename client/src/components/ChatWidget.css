@@ -584,3 +584,201 @@
   from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+/* =============================================================================
+ * Drop 3 — Feedback UI (thumbs up/down + tag picker + comment)
+ * Append these rules to ChatWidget.css.
+ * =============================================================================
+ *
+ * Visual approach: feedback bar sits subtly below each assistant message,
+ * doesn't compete with the answer for attention. Two small circular thumb
+ * icons. Clicking thumbs-down reveals an inline panel with tag chips + a
+ * comment textarea.
+ *
+ * Mobile-first: chips wrap, no horizontal scroll, textarea full width.
+ * =============================================================================
+ */
+
+.chat-feedback-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 12px 36px;  /* left margin aligns with assistant bubble */
+  animation: feedback-fade-in 0.25s ease-out;
+}
+
+@keyframes feedback-fade-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.chat-feedback-thumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-feedback-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  color: #888;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+  font-family: inherit;
+}
+
+.chat-feedback-thumb:hover {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.18);
+  color: #444;
+}
+
+.chat-feedback-thumb:active {
+  transform: scale(0.92);
+}
+
+.chat-feedback-thumb.active.up {
+  background: rgba(40, 167, 69, 0.10);
+  border-color: rgba(40, 167, 69, 0.35);
+  color: #28a745;
+}
+
+.chat-feedback-thumb.active.down {
+  background: rgba(220, 53, 69, 0.10);
+  border-color: rgba(220, 53, 69, 0.35);
+  color: #dc3545;
+}
+
+.chat-feedback-thanks {
+  font-size: 12px;
+  color: #28a745;
+  margin-left: 4px;
+  animation: feedback-fade-in 0.25s ease-out;
+}
+
+.chat-feedback-details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.025);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  animation: feedback-expand 0.2s ease-out;
+}
+
+@keyframes feedback-expand {
+  from { opacity: 0; transform: translateY(-4px); max-height: 0; }
+  to   { opacity: 1; transform: translateY(0); max-height: 400px; }
+}
+
+.chat-feedback-prompt {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #555;
+}
+
+.chat-feedback-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-feedback-tag {
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: white;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  color: #555;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  user-select: none;
+}
+
+.chat-feedback-tag:hover {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.25);
+}
+
+.chat-feedback-tag.selected {
+  background: var(--widget-primary-color, #667eea);
+  border-color: var(--widget-primary-color, #667eea);
+  color: white;
+}
+
+.chat-feedback-tag.selected:hover {
+  filter: brightness(1.08);
+}
+
+.chat-feedback-comment {
+  width: 100%;
+  min-height: 60px;
+  max-height: 120px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: white;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.chat-feedback-comment:focus {
+  outline: none;
+  border-color: var(--widget-primary-color, #667eea);
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.15);
+}
+
+.chat-feedback-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.chat-feedback-cancel,
+.chat-feedback-submit {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.chat-feedback-cancel {
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  color: #666;
+}
+
+.chat-feedback-cancel:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: #333;
+}
+
+.chat-feedback-submit {
+  background: var(--widget-primary-color, #667eea);
+  border: 1px solid var(--widget-primary-color, #667eea);
+  color: white;
+}
+
+.chat-feedback-submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.chat-feedback-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
