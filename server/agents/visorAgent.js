@@ -1,6 +1,6 @@
 const { ChatOpenAI } = require('@langchain/openai');
 const { HumanMessage, AIMessage, SystemMessage } = require('@langchain/core/messages');
-const { searchSimilar, searchSimilarFiltered } = require('../utils/embeddingService');
+const { searchSimilar } = require('../utils/embeddingService');
 const { searchTickets } = require('../utils/ticketSearch');
 const { getOrderDetailsTool } = require('../tools/getOrderDetailsTool');
 const { getOrderStatusTool } = require('../tools/getOrderStatusTool');
@@ -213,30 +213,20 @@ function isLikelyNorwegian(text) {
  * Removes unsupported payment-policy claims for order/payment flow questions.
  * This guards against stale KB/ticket snippets (e.g. specific deposit percentages).
  */
+/**
+ * sanitizeUnsupportedPaymentPolicy — INTENTIONALLY DISABLED as of PR #17 (2026-06-03).
+ *
+ * This filter used to strip lines with payment-policy percentage mentions, on the
+ * (incorrect) assumption that any payment-percentage info from FAQ/tickets was
+ * unreliable. In practice the SYSTEM_PROMPT now contains the authoritative payment
+ * methods list (Visa/Mastercard, Vipps, Klarna, Walley Faktura, Walley Delbetaling)
+ * so the agent has explicit ground truth and doesn't need this defensive post-filter.
+ *
+ * Function and export retained for backward compatibility with existing call sites.
+ * Can be fully removed in a follow-up PR.
+ */
 function sanitizeUnsupportedPaymentPolicy(answerText, userMessage) {
-  if (!answerText || typeof answerText !== 'string') return answerText;
-  if (!isSensitivePolicyQuery(userMessage)) return answerText;
-
-  const lines = answerText.split('\n');
-  let removed = false;
-  const filtered = lines.filter((line) => {
-    const hasPercent = /\b\d{1,3}\s*%\b/.test(line);
-    const hasPaymentPolicyTerms = /(payment|deposit|upfront|partial\s*invoice|invoice|faktura|innbetaling|forhåndsbetaling|delbetaling|betalingsvilkår|production|produksjon)/i.test(line);
-    if (hasPercent && hasPaymentPolicyTerms) {
-      removed = true;
-      return false;
-    }
-    return true;
-  });
-
-  if (!removed) return answerText;
-
-  const fallback = isLikelyNorwegian(userMessage)
-    ? 'Jeg har ikke bekreftede detaljer om betalingsvilkår i kunnskapsbasen. Kontakt kundeservice for korrekt betalingsinformasjon.'
-    : 'I do not have confirmed payment-policy details in the knowledge base. Please contact customer service for accurate payment terms.';
-
-  const cleaned = filtered.join('\n').trim();
-  return cleaned ? `${cleaned}\n\n${fallback}` : fallback;
+  return answerText;
 }
 
 /**
@@ -272,7 +262,7 @@ function hasSubstantiveKbContext(ragContext) {
  * @param {string} message - Current user message
  * @param {Array<{ role: 'user'|'assistant', content: string }>} [conversationHistory] - Previous turns for context (e.g. "this product")
  */
-async function processVisorMessage(message, conversationHistory = [], opts = {}) {
+async function processVisorMessage(message, conversationHistory = []) {
   try {
     // Validate API key
     if (!process.env.OPENAI_API_KEY) {
@@ -300,6 +290,18 @@ CORE KNOWLEDGE (RAG) - CRITICAL RULES:
 - SEMANTIC UNDERSTANDING: Use your semantic understanding to match field names regardless of format. For example, if a user asks about "regular-price" but the document has "regular_price", understand they refer to the same field. Similarly, handle variations like "sale_price" vs "sale-price" vs "sale price", "product_name" vs "productName" vs "product name", etc. Extract and provide the information based on semantic meaning, not exact string matching.
 - ANY JSON STRUCTURE: Ingested content can be products, FAQs, docs, or anything—there is no fixed schema. The knowledge base may use any structure (nested objects, different key names, different languages). Delivery/lead time might appear as production_lead_time, delivery_time, leveringstid, shipping.days, etc. FAQ or fabric samples might be in faq[], questions, support_info, or any other path. Use your intelligence to find and use the relevant information by meaning (e.g. "delivery time" → any field about shipping/lead time; "fabric samples" → any text about samples/tekstilprøver/prøver), not by expecting fixed field names.
 - TRANSPARENCY: If rag_search returns no results or "NO_KNOWLEDGE_BASE_DATA", you MUST explicitly state that you don't have that information in your knowledge base. DO NOT invent products or use general knowledge.
+
+PAYMENT METHODS (AUTHORITATIVE — do not invent or hallucinate):
+Visor accepts ONLY these payment methods:
+- Credit card Visa and Mastercard
+- Vipps
+- Klarna
+- Walley - Betalingsmiddel faktura
+- Walley - Delbetaling
+
+Visor does NOT accept: American Express (Amex), PayPal, Apple Pay, Google Pay, cryptocurrency, bank transfer, cash, or any other method not on the accepted list above.
+
+When asked about payment methods, answer from THIS list, not from rag_search results which may be outdated. If a customer asks about a specific method NOT on the accepted list, clearly say "Nei, vi aksepterer ikke [method]" and suggest one of the accepted methods instead.
 
 ORDER TRACKING & TOOL USAGE:
 - You have tools called get_order_details (cached) and get_order_status (live). Both tools return: order_id, status, tracking, delivery_date. NOTE: Price and currency information are NOT available for security reasons.
@@ -388,40 +390,15 @@ Be helpful, professional, and expert-led.`;
       {
         type: 'function',
         function: {
-          name: 'search_faq',
-          description: 'Search Visor.no FAQs for POLICY, PROCESS, and HOW-TO questions: payment methods, delivery times, returns, measuring guides, mounting instructions, customer service hours, ordering process. DOES NOT contain authoritative product dimensions or specifications — use search_products for those.',
+          name: 'rag_search',
+          description: 'Search the knowledge base (products, FAQs, support tickets, delivery, installation, customer service). MANDATORY: Call this tool for EVERY user message that asks a question or requests information. Do not answer without calling this first. Applies in ALL languages (Norwegian, English, etc.). Use a short search query (e.g. key terms: "tilbud frakt", "offer shipping", "measurements plisse"). If the tool returns "NO_KNOWLEDGE_BASE_DATA", do NOT make up information - state that information is not available.',
           parameters: {
             type: 'object',
             properties: {
-              query: { type: 'string', description: "Concise search query in the user's language" }
-            },
-            required: ['query']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'search_products',
-          description: 'Search the Visor.no PRODUCT CATALOG for authoritative product information: exact dimensions (min/max width and height), textile options, prices, delivery time, product comparisons. ALWAYS use this for any question depending on specific product specs.',
-          parameters: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', description: "Concise search query in the user's language" }
-            },
-            required: ['query']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'search_tickets',
-          description: "Search HISTORICAL customer support conversations for precedent on unusual situations, complaints, defects, edge cases. Tickets are HISTORICAL and may be outdated — never treat as authoritative for current specs or policies. Use as LAST RESORT.",
-          parameters: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', description: "Concise search query in the user's language" }
+              query: {
+                type: 'string',
+                description: 'The search query about products, FAQs, payment methods, delivery, installation, measurements, specifications, or any customer service related information'
+              }
             },
             required: ['query']
           }
@@ -550,28 +527,6 @@ Be helpful, professional, and expert-led.`;
           }
 
           switch (functionName) {
-            case 'search_faq': {
-              args.__source = 'visor_faqs';
-              args.__floor = parseFloat(process.env.RAG_FLOOR_FAQ || '0.60');
-              // fall through to shared logic via rag_search
-            }
-            // eslint-disable-next-line no-fallthrough
-            case 'search_products': {
-              if (!args.__source) {
-                args.__source = 'visor_products';
-                args.__floor = parseFloat(process.env.RAG_FLOOR_PRODUCTS || '0.65');
-              }
-              // fall through
-            }
-            // eslint-disable-next-line no-fallthrough
-            case 'search_tickets': {
-              if (!args.__source) {
-                args.__source = 'visor_tickets';
-                args.__floor = parseFloat(process.env.RAG_FLOOR_TICKETS || '0.55');
-              }
-              // fall through
-            }
-            // eslint-disable-next-line no-fallthrough
             case 'rag_search': {
               const ragResult = await ragTool(args);
               const kbHasSubstantive = hasSubstantiveKbContext(ragResult);
