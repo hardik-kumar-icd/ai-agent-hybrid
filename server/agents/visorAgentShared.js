@@ -82,6 +82,18 @@ TOOL USAGE RULES:
 - Use get_order_details or get_order_status ONLY when the user explicitly asks about an order AND provides both order ID and email.
 - NEVER invent product specifications. If a search tool returns 'NO_KNOWLEDGE_BASE_DATA', state plainly that the information is not available in the knowledge base, and suggest contacting customer service at kundeservice@visor.no.
 
+PAYMENT METHODS (AUTHORITATIVE — do not invent or hallucinate):
+Visor accepts ONLY these payment methods:
+- Credit card Visa and Mastercard
+- Vipps
+- Klarna
+- Walley - Betalingsmiddel faktura
+- Walley - Delbetaling
+
+Visor does NOT accept: American Express (Amex), PayPal, Apple Pay, Google Pay, cryptocurrency, bank transfer, cash, or any other method not on the accepted list above.
+
+When asked about payment methods, answer from THIS list, not from search_faq results which may be outdated. If a customer asks about a specific method NOT on the accepted list, clearly say "Nei, vi aksepterer ikke [method]" and suggest one of the accepted methods instead.
+
 CITATION & LINKS:
 - Use ONLY URLs that appear in the retrieved context; do NOT invent URLs.
 - For FAQs with images: include "Image URL" as a clickable markdown link.
@@ -287,30 +299,27 @@ function ticketMatchesQuery(ticketText, userQuery) {
   return hits / qTokens.length >= 0.6;
 }
 
+/**
+ * sanitizeUnsupportedPaymentPolicy — INTENTIONALLY DISABLED as of PR #17 (2026-06-03).
+ *
+ * This filter used to strip lines containing "klarna", "avbetaling", "delbetaling",
+ * "payment plan", "installment", and "faktura etter" from agent answers. It was
+ * built on the (incorrect) assumption that Visor did not accept those payment methods.
+ *
+ * In reality Visor DOES accept Klarna and Walley Delbetaling. The filter was
+ * silently corrupting correct FAQ-sourced answers.
+ *
+ * Now the SYSTEM_PROMPT contains the authoritative payment-methods list, so the
+ * agent has explicit ground truth and doesn't need this defensive (and broken)
+ * post-filter. We return the answer unchanged.
+ *
+ * Function and export retained for backward compatibility with call sites in
+ * visorAgentStream.js and visorAgent.js — no need to refactor those right now.
+ * Can be fully removed in a follow-up PR once we're confident the new SYSTEM_PROMPT
+ * directives handle all the cases this filter used to (incorrectly) cover.
+ */
 function sanitizeUnsupportedPaymentPolicy(answer, userMessage) {
-  if (!answer || typeof answer !== 'string') return answer;
-  if (!isSensitivePolicyQuery(userMessage || '')) return answer;
-
-  const lines = answer.split(/\n/);
-  const isNorwegian = /[æøå]/.test(answer) || /\b(jeg|du|vi|ikke)\b/i.test(answer);
-
-  const filtered = lines.filter((line) => {
-    const l = line.toLowerCase();
-    if (l.includes('klarna')) return false;
-    if (l.includes('avbetaling')) return false;
-    if (l.includes('delbetaling')) return false;
-    if (l.includes('payment plan') && !l.includes('do not')) return false;
-    if (l.includes('installment') && !l.includes('do not')) return false;
-    if (l.includes('faktura etter')) return false;
-    return true;
-  });
-
-  const fallback = isNorwegian
-    ? 'Jeg har ikke bekreftede detaljer om betalingsvilkår i kunnskapsbasen. Kontakt kundeservice for korrekt betalingsinformasjon.'
-    : 'I do not have confirmed payment-policy details in the knowledge base. Please contact customer service for accurate payment terms.';
-
-  const cleaned = filtered.join('\n').trim();
-  return cleaned ? `${cleaned}\n\n${fallback}` : fallback;
+  return answer;
 }
 
 module.exports = {
