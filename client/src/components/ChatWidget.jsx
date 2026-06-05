@@ -896,9 +896,9 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                               aria-label={conversationLanguage === 'en' ? 'Helpful' : 'Nyttig'}
                               title={conversationLanguage === 'en' ? 'Helpful' : 'Nyttig'}
                             >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M7 10v12"/>
-                                <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H7"/>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M7 22V11"/>
+                                <path d="M15 3v5h4.5a2.5 2.5 0 0 1 2.45 2.99l-1.6 8A2.5 2.5 0 0 1 17.9 22H7V11l4-9a2.5 2.5 0 0 1 4 1z"/>
                               </svg>
                             </button>
                             <button
@@ -919,9 +919,9 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                               aria-label={conversationLanguage === 'en' ? 'Not helpful' : 'Ikke nyttig'}
                               title={conversationLanguage === 'en' ? 'Not helpful' : 'Ikke nyttig'}
                             >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M17 14V2"/>
-                                <path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H17"/>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M17 2v11"/>
+                                <path d="M9 21v-5H4.5a2.5 2.5 0 0 1-2.45-2.99l1.6-8A2.5 2.5 0 0 1 6.1 2H17v11l-4 9a2.5 2.5 0 0 1-4-1z"/>
                               </svg>
                             </button>
                             {fbState?.submitted && (

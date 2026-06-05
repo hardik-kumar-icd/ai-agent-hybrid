@@ -42,10 +42,44 @@ const MAX_TAGS_PER_FEEDBACK = 6;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Validate that a string looks like a UUID. Used for messageId + conversationId.
+ * Validate that a string looks like a UUID. Used for messageId.
  */
 function isValidUuid(s) {
   return typeof s === 'string' && UUID_REGEX.test(s);
+}
+
+/**
+ * Resolve a conversation identifier to its internal UUID.
+ *
+ * The widget stores conversation IDs in localStorage in a text format like
+ * 'conv-1780583492018-4rpnndf2p'. The conversations table tracks this in the
+ * `conversation_id` TEXT column, while the internal primary key is a UUID
+ * stored in the `id` column.
+ *
+ * Callers can pass either format. We check for UUID format first (no DB hit)
+ * and only fall through to a lookup if the input isn't a UUID. This keeps
+ * curl/test traffic free of extra queries while making widget traffic work.
+ *
+ * @param {string} conversationId - UUID or text format
+ * @returns {Promise<string|null>} - resolved UUID, or null if not found
+ */
+async function resolveConversationUuid(conversationId) {
+  if (!conversationId || typeof conversationId !== 'string') return null;
+
+  // Fast path: already a UUID — assume caller passed the internal id directly.
+  // No DB hit needed; downstream message-ownership check will catch if the
+  // UUID doesn't exist.
+  if (UUID_REGEX.test(conversationId)) {
+    return conversationId;
+  }
+
+  // Slow path: look up by external text conversation_id.
+  const result = await query(
+    'SELECT id FROM conversations WHERE conversation_id = $1 LIMIT 1',
+    [conversationId]
+  );
+  if (!result || result.rows.length === 0) return null;
+  return result.rows[0].id;
 }
 
 /**
@@ -78,8 +112,15 @@ async function submitFeedback(input) {
   if (!isValidUuid(messageId)) {
     return { ok: false, error: 'invalid messageId' };
   }
-  if (!isValidUuid(conversationId)) {
+
+  // Resolve conversationId: accept either UUID (curl/test) or widget text format
+  // (e.g. "conv-1780583492018-4rpnndf2p"). Fast path skips the DB hit for UUIDs.
+  if (!conversationId || typeof conversationId !== 'string') {
     return { ok: false, error: 'invalid conversationId' };
+  }
+  const conversationUuid = await resolveConversationUuid(conversationId);
+  if (!conversationUuid) {
+    return { ok: false, error: 'conversation not found' };
   }
 
   // --- Validate rating ---
@@ -127,7 +168,7 @@ async function submitFeedback(input) {
   }
 
   // --- Verify the message exists and belongs to the conversation ---
-  const exists = await verifyMessageInConversation(messageId, conversationId);
+  const exists = await verifyMessageInConversation(messageId, conversationUuid);
   if (!exists) {
     return {
       ok: false,
@@ -138,7 +179,7 @@ async function submitFeedback(input) {
   // --- Upsert ---
   const row = await feedbackRepo.upsert({
     messageId,
-    conversationId,
+    conversationId: conversationUuid,
     rating,
     tags: cleanTags,
     comment: cleanComment,
