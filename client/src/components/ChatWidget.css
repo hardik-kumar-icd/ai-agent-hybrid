@@ -782,3 +782,72 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+/* =============================================================================
+ * Drop 3.1 — Feedback UI fixes
+ * Append these rules to ChatWidget.css.
+ * =============================================================================
+ *
+ * Changes vs. Drop 3:
+ *   - Larger thumb icons (16px vs 14px) so they're more recognizable
+ *   - Lucide-style filled thumb shapes
+ *   - Active state is more prominent (background + ring effect, not just border)
+ *   - Active state persists visually — overrides hover so the "you rated this"
+ *     signal is unambiguous even when re-hovering
+ *
+ * The .chat-feedback-thumb base styling is updated to handle the new fill-based
+ * SVG icons (icons are now `fill="currentColor"` instead of stroke-only).
+ * =============================================================================
+ */
+
+.chat-feedback-thumb {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  color: rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.12s ease;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.chat-feedback-thumb:hover {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.18);
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.chat-feedback-thumb:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+/* ----- Active states (persist after click) ----- */
+
+.chat-feedback-thumb.active.up,
+.chat-feedback-thumb.active.up:hover {
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(34, 197, 94, 0.45);
+  color: #16a34a;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.10);
+}
+
+.chat-feedback-thumb.active.down,
+.chat-feedback-thumb.active.down:hover {
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #dc2626;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.10);
+}
+
+/* Slightly subtler "Takk!" label */
+.chat-feedback-thanks {
+  font-size: 12px;
+  font-weight: 500;
+  color: #16a34a;
+  margin-left: 4px;
+  animation: feedback-fade-in 0.25s ease-out;
+}
