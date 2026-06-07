@@ -11,6 +11,8 @@ const visorRoute = require('./routes/visorRoute');
 const visorChatStreamRoute = require('./routes/visorChatStreamRoute');
 const envVerifyRoute = require('./routes/envVerifyRoute');
 const orderInstallGuidesRoute = require('./routes/orderInstallGuidesRoute');
+const feedbackRoute = require('./routes/feedbackRoute');
+const adminRoute = require('./routes/adminRoute');
 const { ragAgent } = require('./agents/ragAgent');
 const { deleteAllVectors } = require('./utils/embeddingService');
 
@@ -111,6 +113,8 @@ app.use('/visor-chat/stream', visorChatStreamRoute);
 
 // Customer: order-based installation videos for purchased categories
 app.use('/api/order', orderInstallGuidesRoute);
+app.use('/api/feedback', feedbackRoute);
+app.use('/api/admin', adminRoute);
 
 // Environment verification endpoint (admin only)
 app.use('/api/verify-env', requireAdminAuth, envVerifyRoute);
