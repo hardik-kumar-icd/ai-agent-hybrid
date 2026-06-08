@@ -22,6 +22,7 @@ const {
   getLastExecutionPath,
   getLastRetrievalTrace,
 } = require('../agents/visorAgentStream');
+const conversationsRepo = require('../db/repositories/conversations');
 const { validateMessage } = require('../middlewares/validation');
 const { sessionMiddleware } = require('../middlewares/session');
 const { logApiRequest, logOrderLookup } = require('../utils/securityLogger');
@@ -264,6 +265,26 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
     const history = req.session.getHistory ? req.session.getHistory() : [];
 
     const startTime = Date.now();
+
+    // Drop 4-light v2 — resolve conversation UUID up-front so the agent
+    // can record retrieval telemetry against it. Same idempotent call used
+    // by telemetry.logTurn after the turn completes.
+    let dbConversationId = null;
+    try {
+      const widgetConvId = req.body.conversationId || req.headers['x-conversation-id'] || null;
+      if (widgetConvId) {
+        const conv = await conversationsRepo.findOrCreate({
+          conversationId: widgetConvId,
+          language: _language,
+          userAgent: req.headers['user-agent'],
+        });
+        if (conv && conv.id) dbConversationId = conv.id;
+      }
+    } catch (e) {
+      console.warn('[stream] conversation resolution failed:', e?.message);
+      // Continue without telemetry rather than failing the request
+    }
+
     const fullText = await processVisorMessageStream(
       enhancedMessage,
       history,
@@ -271,7 +292,9 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
         sendSse(res, { type: 'token', content: token });
         flush(res);
       },
-      { category: category || 'free' },
+      { category: category || 'free',
+        assistantMessageId,
+        dbConversationId, },
     );
     const durationMs = Date.now() - startTime;
     const path = getLastExecutionPath();
