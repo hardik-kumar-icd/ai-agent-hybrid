@@ -37,10 +37,10 @@ const COMPLEX_PATH_MAX_TOKENS = 500;
 // NO_KNOWLEDGE_BASE_DATA instead of weak chunks the agent might synthesize from.
 // Env-tunable without redeploy. See DROP2_FINAL_DESIGN.md.
 const CONFIDENCE_FLOORS = {
-  visor_faqs: parseFloat(process.env.RAG_FLOOR_FAQ || '0.60'),
-  visor_products: parseFloat(process.env.RAG_FLOOR_PRODUCTS || '0.65'),
-  visor_tickets: parseFloat(process.env.RAG_FLOOR_TICKETS || '0.55'),
-  'tickets_fixed.jsonl': parseFloat(process.env.RAG_FLOOR_TICKETS || '0.55'),
+  visor_faqs: parseFloat(process.env.RAG_FLOOR_FAQ || '0.55'),
+  visor_products: parseFloat(process.env.RAG_FLOOR_PRODUCTS || '0.50'),
+  visor_tickets: parseFloat(process.env.RAG_FLOOR_TICKETS || '0.45'),
+  'tickets_fixed.jsonl': parseFloat(process.env.RAG_FLOOR_TICKETS || '0.45'),
 };
 
 const SOURCE_LABELS = {
@@ -413,6 +413,18 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
             break;
           }
           case 'search_tickets': {
+            // Drop 4-light: block ticket synthesis on sensitive policy topics.
+            // isSensitivePolicyQuery covers payment, returns, warranty, GDPR.
+            // The SYSTEM_PROMPT already instructs the LLM to avoid this; this
+            // is the code-level backstop in case the model drifts from prompt.
+            if (isSensitivePolicyQuery(message)) {
+              console.log('[search:visor_tickets] SENSITIVE_TOPIC_BLOCKED — refusing ticket synthesis for policy question');
+              result =
+                'NO_KNOWLEDGE_BASE_DATA: Ticket history is not authoritative for ' +
+                'policy questions (payments, returns, warranty, privacy). Refer the ' +
+                'customer to kundeservice@visor.no, or use search_faq results only.';
+              break;
+            }
             const rawDocs = await searchTickets(args.query, 10);
             if (!rawDocs || rawDocs.length === 0) {
               result = 'NO_KNOWLEDGE_BASE_DATA: No matching tickets found.';

@@ -94,6 +94,14 @@ Visor does NOT accept: American Express (Amex), PayPal, Apple Pay, Google Pay, c
 
 When asked about payment methods, answer from THIS list, not from search_faq results which may be outdated. If a customer asks about a specific method NOT on the accepted list, clearly say "Nei, vi aksepterer ikke [method]" and suggest one of the accepted methods instead.
 
+SENSITIVE TOPICS (NEVER use search_tickets for these):
+- Returns, refunds, exchanges, right-of-withdrawal (angrerett)
+- Warranty terms, defects, reklamasjon
+- Customer data / GDPR / privacy
+- Payment methods (use the PAYMENT METHODS block above)
+
+For sensitive topics: call search_faq first. If FAQ confidence is low, plainly state the policy is not in the knowledge base and suggest contacting kundeservice@visor.no. NEVER answer sensitive-topic questions from search_tickets — ticket history may contain outdated or wrong policy information.
+
 CITATION & LINKS:
 - Use ONLY URLs that appear in the retrieved context; do NOT invent URLs.
 - For FAQs with images: include "Image URL" as a clickable markdown link.
@@ -242,15 +250,31 @@ function hasSubstantiveKbContext(ragContext) {
 
 function isSensitivePolicyQuery(message) {
   if (!message || typeof message !== 'string') return false;
-  const m = message.toLowerCase();
   const patterns = [
-    /\b(refund|refunder|refundert|reklamasjon|reklamation|complain|complaint)\b/i,
-    /\b(return|retur|returnere|returner|returrett)\b/i,
-    /\b(warranty|garanti|warrant)\b/i,
+    // Payment methods + payment-related queries
+    /\b(betal(ing|er|ingsmetod|ingsmåt)|payment\s+method|how\s+(do|can)\s+i\s+pay|hvordan\s+betal)/i,
+    /\b(visa|mastercard|amex|american\s+express|paypal|apple\s+pay|google\s+pay)\b/i,
+    /\b(vipps|klarna|walley|delbetal|installment|installments|monthly\s+payment|faktura)\b/i,
+    /\b(crypto|cryptocurrency|bitcoin|btc|bank\s+transfer|bankoverf)/i,
+    /\b(aksepterer\s+der(e)?|do\s+you\s+accept|accepts?)\b/i,
     /\b(betalingsvilk[åa]r|payment.{0,15}terms|terms.{0,5}of.{0,5}payment)\b/i,
-    /\b(faktura|invoice|payment.{0,5}plan|deferred.{0,5}payment|delbetaling)\b/i,
+    /\b(invoice|payment.{0,5}plan|deferred.{0,5}payment)\b/i,
+    // Returns, refunds, exchanges, right-of-withdrawal
+    /\b(retur|return|refund|exchange|bytte)/i,
+    /\b(angr(e|er|erett)|right\s+of\s+(withdrawal|return))\b/i,
+    /\b(penger\s+tilbake|money\s+back|chargeback)\b/i,
+    /\b(kanseller|cancel\s+(order|my))/i,
+    /\b(refunder|refundert|complain|complaint)\b/i,
+    // Warranty / claims / defects
+    /\b(garanti|warranty|reklamasjon|reklamation|claim|claims)/i,
+    /\b(defekt|defective|broken|skadet|damaged)\b/i,
+    /\b(replacement\s+part|reservedel)\b/i,
+    // Privacy / GDPR / data
+    /\b(GDPR|personvern|personopplysning|personal\s+data|data\s+protection)\b/i,
+    /\b(slett\s+(min|mine)\s+data|delete\s+my\s+(data|account))\b/i,
+    /\b(cookie|cookies|samtykke|consent)\b/i,
   ];
-  return patterns.some((p) => p.test(m));
+  return patterns.some((p) => p.test(message));
 }
 
 function reRankByKeywordOverlap(docs, query) {
