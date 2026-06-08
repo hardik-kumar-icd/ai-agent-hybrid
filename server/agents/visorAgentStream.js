@@ -30,6 +30,8 @@ const {
   getToolDefinitions,
 } = require('./visorAgentShared');
 
+const retrievalsRepo = require('../db/repositories/retrievalsRepo');
+
 const FAST_PATH_MAX_TOKENS = 250;
 const COMPLEX_PATH_MAX_TOKENS = 500;
 
@@ -182,36 +184,56 @@ async function ragRetrieve(query, opts = {}) {
 /**
  * Search one source for the typed-tool handlers (complex path).
  */
-async function runTypedSearch(query, sourceName, userMessage) {
-  const { docs, belowFloor } = await searchSourceWithFloor(query, sourceName, 10);
+     async function runTypedSearch(query, sourceName, userMessage, telemetryIds = null) {
+      const { docs, belowFloor } = await searchSourceWithFloor(query, sourceName, 10);
+       const bestScore = docs.length > 0 ? (docs[0].score || 0) : 0;
+       const floor = CONFIDENCE_FLOORS[sourceName] ?? null;
 
-  if (belowFloor || docs.length === 0) {
-    return `NO_KNOWLEDGE_BASE_DATA: No reliable matches in ${SOURCE_LABELS[sourceName] || sourceName} for this query. Do NOT invent information.`;
-  }
+       // Drop 4-light v2 — fire-and-forget telemetry. Never blocks the chat path.
+      if (telemetryIds && telemetryIds.messageId && telemetryIds.conversationId) {
+         setImmediate(() => {
+          retrievalsRepo.insert({
+            messageId: telemetryIds.messageId,
+              conversationId: telemetryIds.conversationId,
+             source: sourceName,
+             queryText: query,
+             topMatchId: docs[0]?.chunkId || null,
+             topMatchScore: bestScore,
+             topMatchText: docs[0]?.text || null,
+             resultCount: docs.length,
+             floor,
+             passedFloor: !belowFloor && docs.length > 0,
+           }).catch((e) => console.warn('[retrievals] insert failed:', e?.message));
+         });
+       }
 
-  if (_lastTrace) {
-    _lastTrace.docs.push(...docs.map((d, idx) => ({
-      chunk_id: d.chunkId || null,
-      source: d.source || sourceName,
-      score: d.score || null,
-      text: d.text || '',
-      rank: idx + 1,
-    })));
-  }
+       if (belowFloor || docs.length === 0) {
+         return `NO_KNOWLEDGE_BASE_DATA: No reliable matches in ${SOURCE_LABELS[sourceName] || sourceName} for this query. Do NOT invent information.`;
+       }
 
-  const context = docs
-    .map((d, idx) => `[Context ${idx + 1} from ${d.source}]: ${d.text}`)
-    .join('\n\n');
+       if (_lastTrace) {
+         _lastTrace.docs.push(...docs.map((d, idx) => ({
+           chunk_id: d.chunkId || null,
+           source: d.source || sourceName,
+           score: d.score || null,
+           text: d.text || '',
+           rank: idx + 1,
+         })));
+       }
 
-  if (!hasSubstantiveKbContext(context)) {
-    const sensitive = isSensitivePolicyQuery(userMessage);
-    if (!sensitive) {
-      return `NO_KNOWLEDGE_BASE_DATA: Top matches in ${SOURCE_LABELS[sourceName] || sourceName} are generic and don't answer this query directly.`;
-    }
-  }
+       const context = docs
+         .map((d, idx) => `[Context ${idx + 1} from ${d.source}]: ${d.text}`)
+         .join('\n\n');
 
-  return context;
-}
+       if (!hasSubstantiveKbContext(context)) {
+         const sensitive = isSensitivePolicyQuery(userMessage);
+         if (!sensitive) {
+           return `NO_KNOWLEDGE_BASE_DATA: Top matches in ${SOURCE_LABELS[sourceName] || sourceName} are generic and don't answer this query directly.`;
+         }
+       }
+
+       return context;
+     }
 
 function docsToContext(docs) {
   return docs
@@ -405,54 +427,81 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
       try {
         switch (functionName) {
           case 'search_faq': {
-            result = await runTypedSearch(args.query, 'visor_faqs', message);
-            break;
-          }
+          result = await runTypedSearch(args.query, 'visor_faqs', message, {
+           messageId: opts.assistantMessageId,
+           conversationId: opts.dbConversationId,
+         });
+         break;
+       }
           case 'search_products': {
-            result = await runTypedSearch(args.query, 'visor_products', message);
-            break;
-          }
-          case 'search_tickets': {
-            // Drop 4-light: block ticket synthesis on sensitive policy topics.
-            // isSensitivePolicyQuery covers payment, returns, warranty, GDPR.
-            // The SYSTEM_PROMPT already instructs the LLM to avoid this; this
-            // is the code-level backstop in case the model drifts from prompt.
-            if (isSensitivePolicyQuery(message)) {
-              console.log('[search:visor_tickets] SENSITIVE_TOPIC_BLOCKED — refusing ticket synthesis for policy question');
-              result =
-                'NO_KNOWLEDGE_BASE_DATA: Ticket history is not authoritative for ' +
-                'policy questions (payments, returns, warranty, privacy). Refer the ' +
-                'customer to kundeservice@visor.no, or use search_faq results only.';
-              break;
-            }
-            const rawDocs = await searchTickets(args.query, 10);
-            if (!rawDocs || rawDocs.length === 0) {
-              result = 'NO_KNOWLEDGE_BASE_DATA: No matching tickets found.';
-              break;
-            }
-            const reranked = reRankByKeywordOverlap(rawDocs, args.query);
-            const bestScore = reranked[0]?.score || 0;
-            const ticketSource = reranked[0]?.source || 'visor_tickets';
-            const floor = CONFIDENCE_FLOORS[ticketSource] ?? 0.55;
-            if (bestScore < floor) {
-              console.log(`[search:${ticketSource}] LOW_CONFIDENCE best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)}`);
-              result = 'NO_KNOWLEDGE_BASE_DATA: No tickets matched confidently.';
-            } else {
-              if (_lastTrace) {
-                _lastTrace.docs.push(...reranked.slice(0, 10).map((d, i) => ({
-                  chunk_id: d.chunkId || null,
-                  source: d.source || ticketSource,
-                  score: d.score || null,
-                  text: d.text || '',
-                  rank: i + 1,
-                })));
-              }
-              result = reranked.slice(0, 10)
-                .map((d, idx) => `[Context ${idx + 1} from ${d.source}]: ${d.text}`)
-                .join('\n\n');
-            }
-            break;
-          }
+           result = await runTypedSearch(args.query, 'visor_products', message, {
+           messageId: opts.assistantMessageId,
+           conversationId: opts.dbConversationId,
+         });
+         break;
+       }
+     case 'search_tickets': {
+       // Helper to write retrieval telemetry — fire-and-forget.
+       const writeTicketTelemetry = (topDoc, count, floor, passed, sourceName) => {
+         if (!opts.assistantMessageId || !opts.dbConversationId) return;
+         setImmediate(() => {
+           retrievalsRepo.insert({
+             messageId: opts.assistantMessageId,
+             conversationId: opts.dbConversationId,
+             source: sourceName || 'visor_tickets',
+             queryText: args.query,
+             topMatchId: topDoc?.chunkId || null,
+             topMatchScore: topDoc?.score || null,
+             topMatchText: topDoc?.text || null,
+             resultCount: count,
+             floor,
+             passedFloor: passed,
+           }).catch((e) => console.warn('[retrievals] insert failed:', e?.message));
+         });
+       };
+
+       // Drop 4-light: block ticket synthesis on sensitive policy topics.
+       if (isSensitivePolicyQuery(message)) {
+         console.log('[search:visor_tickets] SENSITIVE_TOPIC_BLOCKED — refusing ticket synthesis for policy question');
+         writeTicketTelemetry(null, 0, null, false, 'visor_tickets');
+         result =
+           'NO_KNOWLEDGE_BASE_DATA: Ticket history is not authoritative for ' +
+           'policy questions (payments, returns, warranty, privacy). Refer the ' +
+           'customer to kundeservice@visor.no, or use search_faq results only.';
+         break;
+       }
+
+       const rawDocs = await searchTickets(args.query, 10);
+       if (!rawDocs || rawDocs.length === 0) {
+         writeTicketTelemetry(null, 0, null, false, 'visor_tickets');
+         result = 'NO_KNOWLEDGE_BASE_DATA: No matching tickets found.';
+         break;
+       }
+       const reranked = reRankByKeywordOverlap(rawDocs, args.query);
+       const bestScore = reranked[0]?.score || 0;
+       const ticketSource = reranked[0]?.source || 'visor_tickets';
+       const floor = CONFIDENCE_FLOORS[ticketSource] ?? 0.55;
+       if (bestScore < floor) {
+         console.log(`[search:${ticketSource}] LOW_CONFIDENCE best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)}`);
+         writeTicketTelemetry(reranked[0], reranked.length, floor, false, ticketSource);
+         result = 'NO_KNOWLEDGE_BASE_DATA: No tickets matched confidently.';
+       } else {
+         writeTicketTelemetry(reranked[0], reranked.length, floor, true, ticketSource);
+         if (_lastTrace) {
+           _lastTrace.docs.push(...reranked.slice(0, 10).map((d, i) => ({
+             chunk_id: d.chunkId || null,
+             source: d.source || ticketSource,
+             score: d.score || null,
+             text: d.text || '',
+             rank: i + 1,
+           })));
+         }
+         result = reranked.slice(0, 10)
+           .map((d, idx) => `[Context ${idx + 1} from ${d.source}]: ${d.text}`)
+           .join('\n\n');
+       }
+       break;
+     }
           case 'get_order_details': {
             const r = await getOrderDetailsTool(args);
             result = JSON.stringify(r);
