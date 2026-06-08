@@ -194,13 +194,31 @@ function ticketChunkContainsQuery(chunkText, userMessage) {
  */
 function isSensitivePolicyQuery(userMessage) {
   if (!userMessage || typeof userMessage !== 'string') return false;
-  const q = userMessage.toLowerCase();
-  const markers = [
-    'how do i order', 'place an order', 'order process', 'bestille', 'hvordan bestiller',
-    'betaling', 'payment', 'deposit', 'upfront', 'advance payment', 'partial invoice',
-    'faktura', 'forhåndsbetaling', 'delbetaling'
+  const patterns = [
+    // Payment methods + payment-related queries
+    /\b(betal(ing|er|ingsmetod|ingsmåt)|payment\s+method|how\s+(do|can)\s+i\s+pay|hvordan\s+betal)/i,
+    /\b(visa|mastercard|amex|american\s+express|paypal|apple\s+pay|google\s+pay)\b/i,
+    /\b(vipps|klarna|walley|delbetal|installment|installments|monthly\s+payment|faktura)\b/i,
+    /\b(crypto|cryptocurrency|bitcoin|btc|bank\s+transfer|bankoverf)/i,
+    /\b(aksepterer\s+der(e)?|do\s+you\s+accept|accepts?)\b/i,
+    /\b(betalingsvilk[åa]r|payment.{0,15}terms|terms.{0,5}of.{0,5}payment)\b/i,
+    /\b(invoice|payment.{0,5}plan|deferred.{0,5}payment)\b/i,
+    // Returns, refunds, exchanges, right-of-withdrawal
+    /\b(retur|return|refund|exchange|bytte)/i,
+    /\b(angr(e|er|erett)|right\s+of\s+(withdrawal|return))\b/i,
+    /\b(penger\s+tilbake|money\s+back|chargeback)\b/i,
+    /\b(kanseller|cancel\s+(order|my))/i,
+    /\b(refunder|refundert|complain|complaint)\b/i,
+    // Warranty / claims / defects
+    /\b(garanti|warranty|reklamasjon|reklamation|claim|claims)/i,
+    /\b(defekt|defective|broken|skadet|damaged)\b/i,
+    /\b(replacement\s+part|reservedel)\b/i,
+    // Privacy / GDPR / data
+    /\b(GDPR|personvern|personopplysning|personal\s+data|data\s+protection)\b/i,
+    /\b(slett\s+(min|mine)\s+data|delete\s+my\s+(data|account))\b/i,
+    /\b(cookie|cookies|samtykke|consent)\b/i,
   ];
-  return markers.some((m) => q.includes(m));
+  return patterns.some((p) => p.test(userMessage));
 }
 
 function isLikelyNorwegian(text) {
