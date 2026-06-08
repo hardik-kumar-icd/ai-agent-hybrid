@@ -12,6 +12,7 @@ const rateLimit = require('express-rate-limit');
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 60, // Limit each IP to 60 requests per windowMs
+  skip: (req) => req.path.startsWith('/api/admin'),  // Drop 5: admin endpoints bypass global rate limit (auth-protected)
   message: {
     error: 'Too many requests, please try again later.',
     retry_after: 0
