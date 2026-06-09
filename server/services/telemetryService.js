@@ -19,7 +19,7 @@
 
 const conversationsRepo = require('../db/repositories/conversations');
 const messagesRepo = require('../db/repositories/messages');
-const retrievalsRepo = require('../db/repositories/retrievals');
+//const retrievalsRepo = require('../db/repositories/retrievals');
 const piiRepo = require('../db/repositories/piiIdentifiers');
 const { redactPII } = require('./piiRedaction');
 
@@ -101,15 +101,6 @@ async function logTurn(input) {
       latencyMs: assistant.latencyMs || null,
       tokenCount: assistant.tokenCount || null,
     });
-
-    // ---- Step 5: batch-insert retrievals (tied to assistant message) ----
-    if (retrieval && Array.isArray(retrieval.chunks) && retrieval.chunks.length > 0) {
-      await retrievalsRepo.insertBatch(
-        assistant.messageId,
-        retrieval.query || '',
-        retrieval.chunks
-      );
-    }
   } catch (err) {
     // Catch-all so telemetry NEVER throws back into the chat path
     console.error('[Telemetry] logTurn failed:', err.message);
