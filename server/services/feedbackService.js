@@ -13,6 +13,7 @@
 
 const feedbackRepo = require('../db/repositories/feedbackRepo');
 const { query } = require('../db/index');
+const episodicMemory = require('./episodicMemoryService');
 
 // Allowed tag values. Multi-select, only valid on rating='down'.
 // Update this list to localize / extend. Each tag is sent verbatim from the
@@ -187,6 +188,16 @@ async function submitFeedback(input) {
 
   if (!row) {
     return { ok: false, error: 'database error' };
+  }
+    // --- Drop 2 Phase B: promote a thumbs-up into a pending learned_qa candidate.
+  // Fire-and-forget — never blocks or breaks the feedback response. ---
+  if (rating === 'up') {
+    setImmediate(() => {
+      episodicMemory.promoteFromFeedback({
+        messageId,
+        conversationId: conversationUuid,
+      });
+    });
   }
 
   return {
