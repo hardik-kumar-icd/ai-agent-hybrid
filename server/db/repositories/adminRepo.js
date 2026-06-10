@@ -332,9 +332,53 @@ async function getOverviewStats() {
   return result.rows[0];
 }
 
+// ============================================================================
+// Learned QA (episodic memory — Drop 2)
+// ============================================================================
+
+/**
+ * List learned_qa candidates by status (default 'pending'), paginated.
+ * Read-only; status mutations live in learnedQaRepo.setStatus.
+ *
+ * @param {object} opts
+ * @param {'pending'|'approved'|'rejected'} opts.status  - default 'pending'
+ * @param {number} opts.limit
+ * @param {number} opts.offset
+ * @returns {Promise<{learned_qa: Array, total: number, limit, offset}>}
+ */
+async function listLearnedQa(opts = {}) {
+  const limit = clampLimit(opts.limit);
+  const offset = clampOffset(opts.offset);
+  const status =
+    ['pending', 'approved', 'rejected'].includes(opts.status) ? opts.status : 'pending';
+
+  const countResult = await query(
+    `SELECT COUNT(*)::int AS total FROM learned_qa WHERE status = $1`,
+    [status]
+  );
+  const total = countResult && countResult.rows[0] ? countResult.rows[0].total : 0;
+
+  const result = await query(
+    `SELECT
+       id, question, answer, language, status,
+       source_message_id, source_conversation_id,
+       embedding_id, embedded_at, approved_by,
+       created_at, updated_at
+     FROM learned_qa
+     WHERE status = $1
+     ORDER BY created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [status, limit, offset]
+  );
+  const learned_qa = result ? result.rows : [];
+
+  return { learned_qa, total, limit, offset };
+}
+
 module.exports = {
   listConversations,
   getConversationDetail,
   listFeedback,
   getOverviewStats,
+  listLearnedQa,
 };

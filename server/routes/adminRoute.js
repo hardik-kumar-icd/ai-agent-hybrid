@@ -18,6 +18,7 @@ const express = require('express');
 const router = express.Router();
 const { requireAdminAuth } = require('../middlewares/auth');
 const adminRepo = require('../db/repositories/adminRepo');
+const learnedQaRepo = require('../db/repositories/learnedQaRepo');
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -104,6 +105,67 @@ router.get('/feedback', async (req, res) => {
     return res.status(200).json({ ok: true, ...result });
   } catch (err) {
     console.error('[admin/feedback] error:', err?.message);
+    return res.status(500).json({ ok: false, error: 'internal error' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/admin/learned-qa — paginated learned_qa candidates by status
+//   status  ("pending" | "approved" | "rejected", default "pending")
+//   limit   (default 20, max 100)   offset (default 0)
+// ----------------------------------------------------------------------------
+router.get('/learned-qa', async (req, res) => {
+  try {
+    const result = await adminRepo.listLearnedQa({
+      status: req.query.status,
+      limit: req.query.limit,
+      offset: req.query.offset,
+    });
+    return res.status(200).json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[admin/learned-qa] error:', err?.message);
+    return res.status(500).json({ ok: false, error: 'internal error' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/admin/learned-qa/:id/approve  |  /reject   (UUID required)
+// First mutation endpoints under /api/admin. Status writes go through
+// learnedQaRepo so adminRepo stays read-only.
+// ----------------------------------------------------------------------------
+router.post('/learned-qa/:id/approve', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!UUID_REGEX.test(id)) {
+      return res.status(400).json({ ok: false, error: 'invalid learned_qa id' });
+    }
+    const approvedBy = (req.body && typeof req.body.approved_by === 'string')
+      ? req.body.approved_by
+      : 'admin';
+    const row = await learnedQaRepo.setStatus(id, 'approved', approvedBy);
+    if (!row) {
+      return res.status(404).json({ ok: false, error: 'learned_qa candidate not found' });
+    }
+    return res.status(200).json({ ok: true, learned_qa: row });
+  } catch (err) {
+    console.error('[admin/learned-qa/:id/approve] error:', err?.message);
+    return res.status(500).json({ ok: false, error: 'internal error' });
+  }
+});
+
+router.post('/learned-qa/:id/reject', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!UUID_REGEX.test(id)) {
+      return res.status(400).json({ ok: false, error: 'invalid learned_qa id' });
+    }
+    const row = await learnedQaRepo.setStatus(id, 'rejected', null);
+    if (!row) {
+      return res.status(404).json({ ok: false, error: 'learned_qa candidate not found' });
+    }
+    return res.status(200).json({ ok: true, learned_qa: row });
+  } catch (err) {
+    console.error('[admin/learned-qa/:id/reject] error:', err?.message);
     return res.status(500).json({ ok: false, error: 'internal error' });
   }
 });
