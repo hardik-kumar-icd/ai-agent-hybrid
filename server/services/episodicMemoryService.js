@@ -1,24 +1,29 @@
 /**
- * episodicMemoryService.js — Drop 2 (Episodic Memory), Phase B: promotion.
+ * episodicMemoryService.js — Drop 2 (Episodic Memory).
  *
- * Turns a thumbs-up on an assistant answer into a 'pending' learned_qa
- * candidate. The candidate's `answer` is the rated assistant message; the
- * `question` is the user message that immediately preceded it in the same
- * conversation.
+ * Phase B (promotion): turn a thumbs-up on an assistant answer into a 'pending'
+ * learned_qa candidate (question = preceding user message, answer = rated msg).
  *
- * Approval-gated: this only ever creates 'pending' rows. Embedding into the
- * Pinecone 'learned_qa' source happens later (Phase C), after an admin
- * approves the candidate.
+ * Phase C2 (embedding): embed approved-but-unembedded candidates into the
+ * Pinecone 'learned_qa' source using the SAME 3072-dim model as the KB, then
+ * mark them embedded. The KB partitions one index by a `source` metadata field
+ * (not Pinecone namespaces), so learned answers live alongside
+ * visor_faqs/products/tickets and are retrieved via
+ * searchSimilarFiltered(query, LEARNED_QA_SOURCE, ...) in C3.
  *
- * Promotion is idempotent (learnedQaRepo.createCandidate is a no-op on a repeat
- * thumbs-up for the same message) and NEVER throws — it must not break the
- * feedback path. Callers invoke it fire-and-forget via setImmediate.
+ * Approval-gated: only admin-approved candidates are ever embedded. Promotion
+ * is fire-and-forget and idempotent; embedding runs from a script/worker.
  *
- * question/answer are read from messages.content, which is already PII-redacted.
+ * NEVER throws into the feedback path. question/answer are read from
+ * messages.content, which is already PII-redacted.
  */
 
 const { query } = require('../db/index');
 const learnedQaRepo = require('../db/repositories/learnedQaRepo');
+const embeddingService = require('../utils/embeddingService');
+
+// Pinecone metadata `source` value for episodic-memory vectors.
+const LEARNED_QA_SOURCE = 'learned_qa';
 
 /**
  * Fetch the (question, answer, language) triple for a rated assistant message.
@@ -85,7 +90,48 @@ async function promoteFromFeedback({ messageId, conversationId } = {}) {
   }
 }
 
+/**
+ * Embed approved-but-unembedded learned_qa candidates into the Pinecone
+ * 'learned_qa' source. Embeds the QUESTION (so similar future questions match)
+ * and carries answer + language + learned_qa id in metadata. Marks each row
+ * embedded on success. Per-item errors are logged and skipped so one bad row
+ * can't block the rest. Safe to re-run — only unembedded approved rows are
+ * processed.
+ *
+ * @param {object} opts
+ * @param {number} opts.limit - max candidates this run (default 50)
+ * @returns {Promise<{processed: number, embedded: number, failed: number}>}
+ */
+async function embedApprovedCandidates({ limit = 50 } = {}) {
+  const candidates = await learnedQaRepo.listApprovedNeedingEmbedding(limit);
+  let embedded = 0;
+  let failed = 0;
+
+  for (const row of candidates) {
+    const embeddingId = `learned_qa_${row.id}`;
+    try {
+      // Pinecone metadata can't hold null — only attach language if present.
+      const metadata = { answer: row.answer, learned_qa_id: row.id };
+      if (row.language) metadata.language = row.language;
+
+      await embeddingService.embedAndStore(
+        [{ id: embeddingId, pageContent: row.question, metadata }],
+        LEARNED_QA_SOURCE
+      );
+      await learnedQaRepo.markEmbedded(row.id, embeddingId);
+      embedded += 1;
+    } catch (err) {
+      failed += 1;
+      console.error(`[EpisodicMemory] embed failed for ${row.id}:`, err.message);
+    }
+  }
+
+  return { processed: candidates.length, embedded, failed };
+}
+
 module.exports = {
   promoteFromFeedback,
   fetchQaPair,
+  embedApprovedCandidates,
+  LEARNED_QA_SOURCE,
 };
