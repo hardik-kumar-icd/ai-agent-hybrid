@@ -413,6 +413,29 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
   _lastPath = 'complex';
 
   const systemPrompt = getSystemPrompt({ category: opts.category });
+
+  // Drop 2 Phase C3 (deterministic): always check admin-validated answers ourselves
+  // instead of relying on the model to elect search_learned_qa. On a hit >= floor,
+  // inject the validated answer into the system prompt as authoritative context.
+  let effectiveSystemPrompt = systemPrompt;
+  try {
+    const validated = await runLearnedQaSearch(message, {
+      messageId: opts.assistantMessageId,
+      conversationId: opts.dbConversationId,
+    });
+    if (validated && validated.startsWith('PREVIOUSLY_VALIDATED_ANSWER')) {
+      const validatedAnswer = validated.split('\n').slice(1).join('\n').trim();
+      effectiveSystemPrompt =
+        systemPrompt +
+        '\n\n=== AUTHORITATIVE VALIDATED ANSWER ===\n' +
+        'A human admin has reviewed and approved the following answer for a question like this one. ' +
+        'Base your reply on it and stay consistent with it; you may add detail from other search_* tools but must not contradict it.\n\n' +
+        validatedAnswer;
+    }
+  } catch (e) {
+    console.warn('[learned_qa:pre-retrieval] skipped:', e?.message);
+  }
+
   const toolDefinitions = getToolDefinitions();
 
   const routerModel = new ChatOpenAI({
@@ -428,7 +451,7 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
   });
 
   const messages = [
-    new SystemMessage(systemPrompt),
+    new SystemMessage(effectiveSystemPrompt),
     ...historyMessages,
     new HumanMessage(message),
   ];
