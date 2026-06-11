@@ -520,13 +520,7 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
          });
          break;
        }
-       case 'search_learned_qa': {
-            result = await runLearnedQaSearch(args.query, {
-              messageId: opts.assistantMessageId,
-              conversationId: opts.dbConversationId,
-            });
-            break;
-          }
+       
           
      case 'search_tickets': {
        // Helper to write retrieval telemetry — fire-and-forget.
