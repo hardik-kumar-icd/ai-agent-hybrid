@@ -275,7 +275,7 @@ async function runLearnedQaSearch(query, telemetryIds = null) {
   const answer = passed ? (top.metadata?.answer || '') : '';
   if (!passed || !answer) {
     console.log(`[search:learned_qa] ${top ? `LOW_CONFIDENCE best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)}` : 'NO_MATCH'}`);
-    return 'NO_KNOWLEDGE_BASE_DATA: No previously validated answer matches this question.';
+    return { passed: false, score: bestScore, answer: '' };
   }
 
   if (_lastTrace) {
@@ -289,7 +289,7 @@ async function runLearnedQaSearch(query, telemetryIds = null) {
   }
 
   console.log(`[search:learned_qa] HIT best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)}`);
-  return `PREVIOUSLY_VALIDATED_ANSWER (admin-approved — prefer this and answer consistently with it):\n${answer}`;
+  return { passed: true, score: bestScore, answer };
 }
 
 function docsToContext(docs) {
@@ -414,26 +414,17 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
 
   const systemPrompt = getSystemPrompt({ category: opts.category });
 
-  // Drop 2 Phase C3 (deterministic): always check admin-validated answers ourselves
-  // instead of relying on the model to elect search_learned_qa. On a hit >= floor,
-  // inject the validated answer into the system prompt as authoritative context.
+ // Drop 2 learned_qa: the orchestrator has already done the single learned_qa
+  // lookup and, for a mid-confidence hit (below the short-circuit threshold),
+  // passed the validated answer down via opts. Inject it as authoritative context.
   let effectiveSystemPrompt = systemPrompt;
-  try {
-    const validated = await runLearnedQaSearch(message, {
-      messageId: opts.assistantMessageId,
-      conversationId: opts.dbConversationId,
-    });
-    if (validated && validated.startsWith('PREVIOUSLY_VALIDATED_ANSWER')) {
-      const validatedAnswer = validated.split('\n').slice(1).join('\n').trim();
-      effectiveSystemPrompt =
-        systemPrompt +
-        '\n\n=== AUTHORITATIVE VALIDATED ANSWER ===\n' +
-        'A human admin has reviewed and approved the following answer for a question like this one. ' +
-        'Base your reply on it and stay consistent with it; you may add detail from other search_* tools but must not contradict it.\n\n' +
-        validatedAnswer;
-    }
-  } catch (e) {
-    console.warn('[learned_qa:pre-retrieval] skipped:', e?.message);
+  if (opts.validatedAnswer) {
+    effectiveSystemPrompt =
+      systemPrompt +
+      '\n\n=== AUTHORITATIVE VALIDATED ANSWER ===\n' +
+      'A human admin has reviewed and approved the following answer for a question like this one. ' +
+      'Base your reply on it and stay consistent with it; you may add detail from other search_* tools but must not contradict it.\n\n' +
+      opts.validatedAnswer;
   }
 
   const toolDefinitions = getToolDefinitions();
@@ -664,9 +655,34 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
     return processComplexPath(message, conversationHistory, onToken, opts);
   }
 
+ // Drop 2/3 learned_qa: one lookup per non-order turn. A high-confidence hit
+  // short-circuits to a direct fast answer (no LLM loop); a mid-confidence hit
+  // is passed down for the complex path to inject as authoritative context.
+  const SHORTCIRCUIT = parseFloat(process.env.RAG_SHORTCIRCUIT_LEARNED || '0.95');
+  let routeOpts = opts;
+  try {
+    const lq = await runLearnedQaSearch(message, {
+      messageId: opts.assistantMessageId,
+      conversationId: opts.dbConversationId,
+    });
+    if (lq && lq.passed) {
+      if (lq.score >= SHORTCIRCUIT) {
+        _lastPath = 'learned_qa';
+        console.log(`[learned_qa] SHORT-CIRCUIT best=${lq.score.toFixed(3)} >= ${SHORTCIRCUIT.toFixed(2)}`);
+        try { onToken(lq.answer); } catch (cbErr) {
+          console.error('[Stream] onToken error:', cbErr.message);
+        }
+        return lq.answer;
+      }
+      routeOpts = { ...opts, validatedAnswer: lq.answer };
+    }
+  } catch (e) {
+    console.warn('[learned_qa] lookup skipped:', e?.message);
+  }
+
   if (classification === 'fast_path') {
     try {
-      const answer = await processFastPath(message, conversationHistory, onToken, opts);
+      const answer = await processFastPath(message, conversationHistory, onToken, routeOpts);
       if (answer !== null) return answer;
       console.log('[Stream] fast_path empty, falling back to complex');
     } catch (err) {
@@ -674,7 +690,7 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
     }
   }
 
-  return processComplexPath(message, conversationHistory, onToken, opts);
+  return processComplexPath(message, conversationHistory, onToken, routeOpts);
 }
 
 module.exports = {
