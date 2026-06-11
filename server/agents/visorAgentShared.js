@@ -74,7 +74,9 @@ CRITICAL LANGUAGE RULE:
 
 TOOL USAGE RULES:
 - For ANY question about Visor.no — products, services, FAQs, delivery, payments, installation, prices, policies — call AT LEAST ONE search_* tool FIRST. Do not answer from training data.
+- ALWAYS try search_learned_qa FIRST. If it returns a PREVIOUSLY_VALIDATED_ANSWER, prefer that answer and stay consistent with it. Only if it returns NO_KNOWLEDGE_BASE_DATA do you rely on the other search_* tools.
 - Choose the right tool for the question type:
+  - search_learned_qa: previously human-validated answers to similar past questions — CHECK THIS FIRST
   - search_faq:      policies, processes, how-to, opening hours, payment methods, returns
   - search_products: authoritative product specs (dimensions, textiles, prices, comparisons)
   - search_tickets:  precedent for unusual situations, complaints, defects, edge cases (last resort)
@@ -152,6 +154,20 @@ already been validated upstream.`,
 // ---------------------------------------------------------------------------
 function getToolDefinitions() {
   return [
+        {
+      type: 'function',
+      function: {
+        name: 'search_learned_qa',
+        description: 'Search PREVIOUSLY VALIDATED answers: past questions whose answers a human admin reviewed and approved as correct for Visor.no. Call this FIRST for any Visor.no question. If it returns a PREVIOUSLY_VALIDATED_ANSWER, prefer that answer and stay consistent with it (you may still call other search_* tools to add detail). If it returns NO_KNOWLEDGE_BASE_DATA, fall back to search_faq / search_products / search_tickets as usual.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: "Concise search query in the user's language" },
+          },
+          required: ['query'],
+        },
+      },
+    },
     {
       type: 'function',
       function: {
