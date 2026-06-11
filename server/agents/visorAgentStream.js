@@ -43,6 +43,7 @@ const CONFIDENCE_FLOORS = {
   visor_products: parseFloat(process.env.RAG_FLOOR_PRODUCTS || '0.50'),
   visor_tickets: parseFloat(process.env.RAG_FLOOR_TICKETS || '0.45'),
   'tickets_fixed.jsonl': parseFloat(process.env.RAG_FLOOR_TICKETS || '0.45'),
+  learned_qa: parseFloat(process.env.RAG_FLOOR_LEARNED || '0.82'),
 };
 
 const SOURCE_LABELS = {
@@ -234,6 +235,62 @@ async function ragRetrieve(query, opts = {}) {
 
        return context;
      }
+/**
+ * Search the learned_qa source (validated, admin-approved Q&A). We embed the
+ * QUESTION, so the matched text is a past question and the validated answer is
+ * in metadata.answer. Basic surfacing only — hybrid blending is Drop 4 final.
+ */
+async function runLearnedQaSearch(query, telemetryIds = null) {
+  let docs = [];
+  try {
+    docs = await searchSimilarFiltered(query, 'learned_qa', 3);
+  } catch (e) {
+    console.error('[search:learned_qa] error:', e.message);
+    docs = [];
+  }
+
+  const top = docs[0] || null;
+  const bestScore = top?.score || 0;
+  const floor = CONFIDENCE_FLOORS['learned_qa'] ?? 0.82;
+  const passed = !!top && bestScore >= floor;
+
+  // Drop 4-light v2 telemetry — fire-and-forget. Never blocks the chat path.
+  if (telemetryIds && telemetryIds.messageId && telemetryIds.conversationId) {
+    setImmediate(() => {
+      retrievalsRepo.insert({
+        messageId: telemetryIds.messageId,
+        conversationId: telemetryIds.conversationId,
+        source: 'learned_qa',
+        queryText: query,
+        topMatchId: top?.chunkId || null,
+        topMatchScore: bestScore,
+        topMatchText: top?.text || null,   // matched past question
+        resultCount: docs.length,
+        floor,
+        passedFloor: passed,
+      }).catch((e) => console.warn('[retrievals] insert failed:', e?.message));
+    });
+  }
+
+  const answer = passed ? (top.metadata?.answer || '') : '';
+  if (!passed || !answer) {
+    console.log(`[search:learned_qa] ${top ? `LOW_CONFIDENCE best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)}` : 'NO_MATCH'}`);
+    return 'NO_KNOWLEDGE_BASE_DATA: No previously validated answer matches this question.';
+  }
+
+  if (_lastTrace) {
+    _lastTrace.docs.push({
+      chunk_id: top.chunkId || null,
+      source: 'learned_qa',
+      score: bestScore,
+      text: top.text || '',
+      rank: 1,
+    });
+  }
+
+  console.log(`[search:learned_qa] HIT best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)}`);
+  return `PREVIOUSLY_VALIDATED_ANSWER (admin-approved — prefer this and answer consistently with it):\n${answer}`;
+}
 
 function docsToContext(docs) {
   return docs
@@ -440,6 +497,14 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
          });
          break;
        }
+       case 'search_learned_qa': {
+            result = await runLearnedQaSearch(args.query, {
+              messageId: opts.assistantMessageId,
+              conversationId: opts.dbConversationId,
+            });
+            break;
+          }
+          
      case 'search_tickets': {
        // Helper to write retrieval telemetry — fire-and-forget.
        const writeTicketTelemetry = (topDoc, count, floor, passed, sourceName) => {
