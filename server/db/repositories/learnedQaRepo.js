@@ -121,6 +121,37 @@ async function markEmbedded(id, embeddingId) {
   return result?.rows?.[0] || null;
 }
 
+/**
+ * Edit a candidate's question and/or answer (admin curation, before or after
+ * approval). Clears embedding_id/embedded_at so the Phase C embed worker
+ * re-embeds the edited content — the stable Pinecone id learned_qa_<id>
+ * overwrites the old vector. Pass only the fields to change; omitted fields
+ * (undefined/null) are preserved.
+ *
+ * @param {string} id
+ * @param {object} fields
+ * @param {string} [fields.question]
+ * @param {string} [fields.answer]
+ * @returns {Promise<object|null>} the updated row, or null if id/fields invalid
+ */
+async function updateContent(id, fields = {}) {
+  const { question = null, answer = null } = fields;
+  if (!id) return null;
+  if (question == null && answer == null) return null;
+  const result = await query(
+    `UPDATE learned_qa
+        SET question = COALESCE($2, question),
+            answer = COALESCE($3, answer),
+            embedding_id = NULL,
+            embedded_at = NULL,
+            updated_at = NOW()
+      WHERE id = $1
+      RETURNING *`,
+    [id, question, answer]
+  );
+  return result?.rows?.[0] || null;
+}
+
 module.exports = {
   createCandidate,
   findById,
@@ -128,4 +159,5 @@ module.exports = {
   setStatus,
   listApprovedNeedingEmbedding,
   markEmbedded,
+  updateContent,
 };
