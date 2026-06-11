@@ -170,4 +170,36 @@ router.post('/learned-qa/:id/reject', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// PATCH /api/admin/learned-qa/:id   (UUID required)
+// Edit a candidate's question and/or answer before/after approval to curate the
+// learning data. Clears the Pinecone embedding state so the Phase C embed worker
+// re-embeds the edited content (stable id overwrites the old vector).
+// ----------------------------------------------------------------------------
+router.patch('/learned-qa/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!UUID_REGEX.test(id)) {
+      return res.status(400).json({ ok: false, error: 'invalid learned_qa id' });
+    }
+    const question = (req.body && typeof req.body.question === 'string')
+      ? req.body.question.trim()
+      : undefined;
+    const answer = (req.body && typeof req.body.answer === 'string')
+      ? req.body.answer.trim()
+      : undefined;
+    if (!question && !answer) {
+      return res.status(400).json({ ok: false, error: 'question or answer required' });
+    }
+    const row = await learnedQaRepo.updateContent(id, { question, answer });
+    if (!row) {
+      return res.status(404).json({ ok: false, error: 'learned_qa candidate not found' });
+    }
+    return res.status(200).json({ ok: true, learned_qa: row });
+  } catch (err) {
+    console.error('[admin/learned-qa/:id] error:', err?.message);
+    return res.status(500).json({ ok: false, error: 'internal error' });
+  }
+});
+
 module.exports = router;
