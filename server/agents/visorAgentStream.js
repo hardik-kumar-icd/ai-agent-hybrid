@@ -43,7 +43,7 @@ const CONFIDENCE_FLOORS = {
   visor_products: parseFloat(process.env.RAG_FLOOR_PRODUCTS || '0.50'),
   visor_tickets: parseFloat(process.env.RAG_FLOOR_TICKETS || '0.45'),
   'tickets_fixed.jsonl': parseFloat(process.env.RAG_FLOOR_TICKETS || '0.45'),
-  learned_qa: parseFloat(process.env.RAG_FLOOR_LEARNED || '0.82'),
+  learned_qa: parseFloat(process.env.RAG_FLOOR_LEARNED || '0.72'),
 };
 
 const SOURCE_LABELS = {
