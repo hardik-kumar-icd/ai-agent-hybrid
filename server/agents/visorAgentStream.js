@@ -167,6 +167,22 @@ async function ragRetrieve(query, opts = {}) {
     mergedDocs = mergedDocs.slice(0, topK);
   }
 
+  // Drop 4 final (hybrid): blend the orchestrator's pre-fetched learned_qa hit
+  // into the ranked KB results with a validation boost, so a human-approved
+  // answer competes by score rather than auto-overriding a better KB match.
+  const lq = opts.learnedQa;
+  if (lq && lq.answer && (lq.score || 0) > 0) {
+    const boost = parseFloat(process.env.RAG_LEARNED_BOOST || '0.10');
+    mergedDocs.push({
+      source: 'learned_qa',
+      chunkId: 'learned_qa',
+      text: `Previously validated answer (admin-approved): ${lq.answer}`,
+      score: (lq.score || 0) + boost,
+    });
+    mergedDocs.sort((a, b) => (b.score || 0) - (a.score || 0));
+    mergedDocs = mergedDocs.slice(0, topK);
+  }
+
   if (_lastTrace) {
     _lastTrace.searchQuery = query;
     _lastTrace.cacheHit = cacheHitBefore;
@@ -359,7 +375,7 @@ If the examples are not sufficient, give a best-effort helpful answer and, if ne
 async function processFastPath(message, conversationHistory, onToken, opts = {}) {
   _lastPath = 'fast';
 
-  const docs = await ragRetrieve(message, { category: opts.category });
+  const docs = await ragRetrieve(message, { category: opts.category, learnedQa: opts.learnedQa });
   const context = docsToContext(docs);
 
   if (!context || context.trim().length === 0) return null;
@@ -414,17 +430,21 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
 
   const systemPrompt = getSystemPrompt({ category: opts.category });
 
- // Drop 2 learned_qa: the orchestrator has already done the single learned_qa
-  // lookup and, for a mid-confidence hit (below the short-circuit threshold),
-  // passed the validated answer down via opts. Inject it as authoritative context.
+ // Drop 4 final (hybrid): the orchestrator passed the single learned_qa hit down
+  // via opts.learnedQa. The complex path is tool-driven (no unified ranked list),
+  // so we blend by injecting it as a SCORE-AWARE candidate the model weighs
+  // against its tool results — not as the only source.
   let effectiveSystemPrompt = systemPrompt;
-  if (opts.validatedAnswer) {
+  if (opts.learnedQa && opts.learnedQa.answer) {
+    const rel = (opts.learnedQa.score || 0).toFixed(2);
     effectiveSystemPrompt =
       systemPrompt +
-      '\n\n=== AUTHORITATIVE VALIDATED ANSWER ===\n' +
-      'A human admin has reviewed and approved the following answer for a question like this one. ' +
-      'Base your reply on it and stay consistent with it; you may add detail from other search_* tools but must not contradict it.\n\n' +
-      opts.validatedAnswer;
+      '\n\n=== PREVIOUSLY VALIDATED ANSWER (relevance ' + rel + ') ===\n' +
+      'A human admin approved the following answer for a SIMILAR past question. ' +
+      'Weigh it alongside your search_* tool results: if it fits this question, prefer it; ' +
+      'if your tools surface a clearly better-matching or more current answer, use that instead. ' +
+      'Do not treat it as the only source.\n\n' +
+      opts.learnedQa.answer;
   }
 
   const toolDefinitions = getToolDefinitions();
@@ -674,7 +694,7 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
         }
         return lq.answer;
       }
-      routeOpts = { ...opts, validatedAnswer: lq.answer };
+      routeOpts = { ...opts, learnedQa: { score: lq.score, answer: lq.answer } };
     }
   } catch (e) {
     console.warn('[learned_qa] lookup skipped:', e?.message);
