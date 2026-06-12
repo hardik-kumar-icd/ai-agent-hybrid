@@ -16,6 +16,7 @@ export default function Sidebar({
     { id: 'overview',      label: 'Overview',          icon: '📊' },
     { id: 'conversations', label: 'Conversations',     icon: '💬' },
     { id: 'feedback',      label: 'Feedback',          icon: '👍' },
+    { id: 'learned',       label: 'Learning',          icon: '🧠' },
     { id: 'knowledge',     label: 'Knowledge Base',    icon: '📁' },
     { id: 'diagnostics',   label: 'Diagnostics',       icon: '🔧' },
   ];
