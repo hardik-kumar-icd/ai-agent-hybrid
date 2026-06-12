@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar';
 import OverviewSection from './components/OverviewSection';
 import ConversationsSection from './components/ConversationsSection';
 import FeedbackSection from './components/FeedbackSection';
+import LearnedQaSection from './components/LearnedQaSection';
 import KnowledgeBaseSection from './components/KnowledgeBaseSection';
 import DiagnosticsSection from './components/DiagnosticsSection';
 
@@ -75,6 +76,9 @@ export default function AdminDashboard() {
         )}
         {activeSection === 'feedback' && (
           <FeedbackSection get={get} hasToken={hasToken} />
+        )}
+        {activeSection === 'learned' && (
+          <LearnedQaSection get={get} request={request} hasToken={hasToken} />
         )}
         {activeSection === 'knowledge' && (
           <KnowledgeBaseSection
