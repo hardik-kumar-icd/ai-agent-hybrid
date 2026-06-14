@@ -102,23 +102,35 @@ async function promoteFromFeedback({ messageId, conversationId } = {}) {
  * @param {number} opts.limit - max candidates this run (default 50)
  * @returns {Promise<{processed: number, embedded: number, failed: number}>}
  */
+/**
+ * Embed a single learned_qa row's QUESTION into the Pinecone 'learned_qa'
+ * source and mark it embedded. Shared by the batch worker and the admin approve
+ * endpoint. Throws on failure — callers decide how to handle it.
+ *
+ * @param {object} row - learned_qa row (needs id, question, answer, language)
+ * @returns {Promise<object|null>} the updated row (embedding_id set)
+ */
+async function embedRow(row) {
+  const embeddingId = `learned_qa_${row.id}`;
+  // Pinecone metadata can't hold null — only attach language if present.
+  const metadata = { answer: row.answer, learned_qa_id: row.id };
+  if (row.language) metadata.language = row.language;
+
+  await embeddingService.embedAndStore(
+    [{ id: embeddingId, pageContent: row.question, metadata }],
+    LEARNED_QA_SOURCE
+  );
+  return learnedQaRepo.markEmbedded(row.id, embeddingId);
+}
+
 async function embedApprovedCandidates({ limit = 50 } = {}) {
   const candidates = await learnedQaRepo.listApprovedNeedingEmbedding(limit);
   let embedded = 0;
   let failed = 0;
 
   for (const row of candidates) {
-    const embeddingId = `learned_qa_${row.id}`;
     try {
-      // Pinecone metadata can't hold null — only attach language if present.
-      const metadata = { answer: row.answer, learned_qa_id: row.id };
-      if (row.language) metadata.language = row.language;
-
-      await embeddingService.embedAndStore(
-        [{ id: embeddingId, pageContent: row.question, metadata }],
-        LEARNED_QA_SOURCE
-      );
-      await learnedQaRepo.markEmbedded(row.id, embeddingId);
+      await embedRow(row);
       embedded += 1;
     } catch (err) {
       failed += 1;
@@ -129,9 +141,35 @@ async function embedApprovedCandidates({ limit = 50 } = {}) {
   return { processed: candidates.length, embedded, failed };
 }
 
+/**
+ * Embed a single APPROVED candidate by id — used by the admin approve endpoint
+ * so approval makes the answer live immediately (no CLI worker run needed).
+ * Guards: only an approved, not-yet-embedded row is embedded. Never throws;
+ * returns { ok, row?, reason? }. On failure the row stays approved+unembedded
+ * and the batch worker / a re-approve remains a fallback.
+ *
+ * @param {string} id - learned_qa id
+ * @returns {Promise<{ok: boolean, row?: object, reason?: string}>}
+ */
+async function embedApprovedById(id) {
+  try {
+    const row = await learnedQaRepo.findById(id);
+    if (!row) return { ok: false, reason: 'not_found' };
+    if (row.status !== 'approved') return { ok: false, reason: 'not_approved' };
+    if (row.embedding_id) return { ok: true, row, reason: 'already_embedded' };
+
+    const updated = await embedRow(row);
+    return { ok: true, row: updated || row };
+  } catch (err) {
+    console.error(`[EpisodicMemory] embedApprovedById failed for ${id}:`, err.message);
+    return { ok: false, reason: 'embed_error' };
+  }
+}
+
 module.exports = {
   promoteFromFeedback,
   fetchQaPair,
   embedApprovedCandidates,
+  embedApprovedById,
   LEARNED_QA_SOURCE,
 };
