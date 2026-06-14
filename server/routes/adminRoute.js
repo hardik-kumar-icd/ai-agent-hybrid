@@ -18,6 +18,7 @@ const express = require('express');
 const router = express.Router();
 const { requireAdminAuth } = require('../middlewares/auth');
 const adminRepo = require('../db/repositories/adminRepo');
+const episodicMemoryService = require('../services/episodicMemoryService');
 const learnedQaRepo = require('../db/repositories/learnedQaRepo');
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -146,7 +147,15 @@ router.post('/learned-qa/:id/approve', async (req, res) => {
     if (!row) {
       return res.status(404).json({ ok: false, error: 'learned_qa candidate not found' });
     }
-    return res.status(200).json({ ok: true, learned_qa: row });
+    // Auto-embed so the approved answer goes live immediately (no CLI worker run
+    // needed). Non-fatal: if embedding fails the row stays approved+unembedded
+    // and the embed worker / a re-approve is the fallback.
+    const embedResult = await episodicMemoryService.embedApprovedById(id);
+    return res.status(200).json({
+      ok: true,
+      learned_qa: embedResult.row || row,
+      embedded: embedResult.ok,
+    });
   } catch (err) {
     console.error('[admin/learned-qa/:id/approve] error:', err?.message);
     return res.status(500).json({ ok: false, error: 'internal error' });
