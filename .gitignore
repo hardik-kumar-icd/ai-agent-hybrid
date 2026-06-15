@@ -25,6 +25,10 @@ server/uploads/
 server/data/*
 !server/data/installVideos.json
 
+# Ingestion pipeline data (raw + cleaned/summarized KB source data;
+# large + regeneratable, lives only on the VM — must never be committed)
+server/scripts/data/
+
 # Admin build output
 server/public/
 
