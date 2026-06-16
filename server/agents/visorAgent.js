@@ -228,26 +228,6 @@ function isLikelyNorwegian(text) {
 }
 
 /**
- * Removes unsupported payment-policy claims for order/payment flow questions.
- * This guards against stale KB/ticket snippets (e.g. specific deposit percentages).
- */
-/**
- * sanitizeUnsupportedPaymentPolicy — INTENTIONALLY DISABLED as of PR #17 (2026-06-03).
- *
- * This filter used to strip lines with payment-policy percentage mentions, on the
- * (incorrect) assumption that any payment-percentage info from FAQ/tickets was
- * unreliable. In practice the SYSTEM_PROMPT now contains the authoritative payment
- * methods list (Visa/Mastercard, Vipps, Klarna, Walley Faktura, Walley Delbetaling)
- * so the agent has explicit ground truth and doesn't need this defensive post-filter.
- *
- * Function and export retained for backward compatibility with existing call sites.
- * Can be fully removed in a follow-up PR.
- */
-function sanitizeUnsupportedPaymentPolicy(answerText, userMessage) {
-  return answerText;
-}
-
-/**
  * Decide if RAG context is substantive (real product/FAQ answer) or only generic contact fallback.
  * When the KB returns only "Fant ikke svar" / contact info, we treat it as "no data" and search tickets.
  */
@@ -556,7 +536,7 @@ Be helpful, professional, and expert-led.`;
                 if (!sensitivePolicyQuery) {
                   const ticketAnswer = await answerFromTickets(message);
                   if (ticketAnswer && ticketAnswer.trim().length > 0) {
-                    return sanitizeUnsupportedPaymentPolicy(ticketAnswer, message);
+                    return ticketAnswer;
                   }
                 }
               } else {
@@ -573,7 +553,7 @@ Be helpful, professional, and expert-led.`;
                     if (strongScore || substringMatch) {
                       const ticketAnswer = await answerFromTickets(message);
                       if (ticketAnswer && ticketAnswer.trim().length > 0) {
-                        return sanitizeUnsupportedPaymentPolicy(ticketAnswer, message);
+                        return ticketAnswer;
                       }
                     }
                   } catch (err) {
@@ -660,7 +640,7 @@ Be helpful, professional, and expert-led.`;
 
     // Return the final response
     const finalText = response.content || 'Jeg beklager, jeg kunne ikke generere et svar.';
-    return sanitizeUnsupportedPaymentPolicy(finalText, message);
+    return finalText;
   } catch (error) {
     console.error('Error processing Visor message:', error);
     throw new Error(`Failed to process message: ${error.message}`);

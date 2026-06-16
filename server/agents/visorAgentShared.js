@@ -323,29 +323,6 @@ function ticketMatchesQuery(ticketText, userQuery) {
   return hits / qTokens.length >= 0.6;
 }
 
-/**
- * sanitizeUnsupportedPaymentPolicy — INTENTIONALLY DISABLED as of PR #17 (2026-06-03).
- *
- * This filter used to strip lines containing "klarna", "avbetaling", "delbetaling",
- * "payment plan", "installment", and "faktura etter" from agent answers. It was
- * built on the (incorrect) assumption that Visor did not accept those payment methods.
- *
- * In reality Visor DOES accept Klarna and Walley Delbetaling. The filter was
- * silently corrupting correct FAQ-sourced answers.
- *
- * Now the SYSTEM_PROMPT contains the authoritative payment-methods list, so the
- * agent has explicit ground truth and doesn't need this defensive (and broken)
- * post-filter. We return the answer unchanged.
- *
- * Function and export retained for backward compatibility with call sites in
- * visorAgentStream.js and visorAgent.js — no need to refactor those right now.
- * Can be fully removed in a follow-up PR once we're confident the new SYSTEM_PROMPT
- * directives handle all the cases this filter used to (incorrectly) cover.
- */
-function sanitizeUnsupportedPaymentPolicy(answer, userMessage) {
-  return answer;
-}
-
 module.exports = {
   getSystemPrompt,
   getToolDefinitions,
@@ -354,5 +331,4 @@ module.exports = {
   reRankByKeywordOverlap,
   sanitizeTicketText,
   ticketMatchesQuery,
-  sanitizeUnsupportedPaymentPolicy,
 };

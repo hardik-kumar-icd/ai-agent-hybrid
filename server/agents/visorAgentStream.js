@@ -23,7 +23,6 @@ const getOrderStatusTool = require('../tools/getOrderStatusTool');
 const {
   hasSubstantiveKbContext,
   isSensitivePolicyQuery,
-  sanitizeUnsupportedPaymentPolicy,
   reRankByKeywordOverlap,
   sanitizeTicketText,
   getSystemPrompt,
@@ -419,7 +418,7 @@ async function processFastPath(message, conversationHistory, onToken, opts = {})
     }
   }
 
-  return sanitizeUnsupportedPaymentPolicy(fullText, message);
+  return fullText;
 }
 
 // ===========================================================================
@@ -656,7 +655,7 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
     }
   }
 
-  return sanitizeUnsupportedPaymentPolicy(fullText, message);
+  return fullText;
 }
 
 // ===========================================================================
