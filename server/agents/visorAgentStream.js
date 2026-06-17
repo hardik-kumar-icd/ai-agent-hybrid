@@ -99,6 +99,48 @@ function pickFastPathModel(docs) {
 /**
  * Search a single source and apply its confidence floor.
  */
+const KEYWORD_RESCUE_SOURCES = new Set(['visor_products']);
+
+/**
+ * Keyword rescue for short term / SKU queries.
+ *
+ * A short, distinctive query (a product name, a feature like "Cordlock", or a
+ * SKU like "PLC20-E") dilutes against long product chunks, so cosine can land
+ * below the confidence floor even though the product is a correct match. When a
+ * distinctive query token appears verbatim in a result we treat that result as
+ * a confident match regardless of score.
+ *
+ * False-positive guards:
+ *   - distinctive token = length >= 5, OR length >= 4 containing a digit (SKU-like)
+ *   - a token present in > 60% of returned docs is treated as generic and ignored
+ *   - returns at most the top 3 matching docs (reranked order) as focused context
+ * Returns [] when nothing distinctive matches, so genuine "not found" still deflects.
+ */
+function findKeywordRescueDocs(docs, query) {
+  if (!Array.isArray(docs) || docs.length === 0 || !query) return [];
+  const tokens = String(query).toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length >= 5 || (t.length >= 4 && /\d/.test(t)));
+  if (tokens.length === 0) return [];
+
+  const maxDocFreq = Math.max(1, Math.floor(docs.length * 0.6));
+  const distinctive = tokens.filter((tok) => {
+    let freq = 0;
+    for (const d of docs) {
+      if (String(d && d.text || '').toLowerCase().includes(tok)) freq += 1;
+    }
+    return freq >= 1 && freq <= maxDocFreq;
+  });
+  if (distinctive.length === 0) return [];
+
+  const matched = docs.filter((d) => {
+    const text = String(d && d.text || '').toLowerCase();
+    return distinctive.some((tok) => text.includes(tok));
+  });
+  return matched.slice(0, 3);
+}
+
 async function searchSourceWithFloor(query, sourceName, topK = 10) {
   const docs = await searchSimilarFiltered(query, sourceName, topK);
   if (!docs || docs.length === 0) {
@@ -108,6 +150,13 @@ async function searchSourceWithFloor(query, sourceName, topK = 10) {
   const bestScore = reranked[0]?.score || 0;
   const floor = CONFIDENCE_FLOORS[sourceName] ?? 0.55;
   if (bestScore < floor) {
+    if (KEYWORD_RESCUE_SOURCES.has(sourceName)) {
+      const rescued = findKeywordRescueDocs(reranked, query);
+      if (rescued.length > 0) {
+        console.log(`[search:${sourceName}] KEYWORD_RESCUE best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)} rescued=${rescued.length}`);
+        return { docs: rescued, belowFloor: false, bestScore };
+      }
+    }
     console.log(`[search:${sourceName}] LOW_CONFIDENCE best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)}`);
     return { docs: reranked, belowFloor: true, bestScore };
   }
