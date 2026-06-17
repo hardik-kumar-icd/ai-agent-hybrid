@@ -110,10 +110,10 @@ const KEYWORD_RESCUE_SOURCES = new Set(['visor_products']);
  * distinctive query token appears verbatim in a result we treat that result as
  * a confident match regardless of score.
  *
- * False-positive guards:
- *   - distinctive token = length >= 5, OR length >= 4 containing a digit (SKU-like)
- *   - a token present in > 60% of returned docs is treated as generic and ignored
- *   - returns at most the top 3 matching docs (reranked order) as focused context
+* False-positive guard:
+ *   - distinctive token = length >= 5, OR length >= 4 containing a digit (SKU-like),
+ *     which filters out short filler. A distinctive queried term legitimately
+ *     appearing across several products SHOULD surface them all (capped at 5).
  * Returns [] when nothing distinctive matches, so genuine "not found" still deflects.
  */
 function findKeywordRescueDocs(docs, query) {
@@ -124,21 +124,11 @@ function findKeywordRescueDocs(docs, query) {
     .filter((t) => t.length >= 5 || (t.length >= 4 && /\d/.test(t)));
   if (tokens.length === 0) return [];
 
-  const maxDocFreq = Math.max(1, Math.floor(docs.length * 0.6));
-  const distinctive = tokens.filter((tok) => {
-    let freq = 0;
-    for (const d of docs) {
-      if (String(d && d.text || '').toLowerCase().includes(tok)) freq += 1;
-    }
-    return freq >= 1 && freq <= maxDocFreq;
-  });
-  if (distinctive.length === 0) return [];
-
   const matched = docs.filter((d) => {
     const text = String(d && d.text || '').toLowerCase();
-    return distinctive.some((tok) => text.includes(tok));
+    return tokens.some((tok) => text.includes(tok));
   });
-  return matched.slice(0, 3);
+  return matched.slice(0, 5);
 }
 
 async function searchSourceWithFloor(query, sourceName, topK = 10) {
