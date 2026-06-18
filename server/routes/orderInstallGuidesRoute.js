@@ -419,10 +419,11 @@ router.post('/install-guides', async (req, res) => {
       };
     }
 
+    const includeDebug = req.query.debug === '1' || (req.body && req.body.debug === true);
     return res.json({
       order_id: String(order_id).trim(),
       videos: deduped,
-      debug,
+      ...(includeDebug ? { debug } : {}),
     });
   } catch (error) {
     console.error('[installVideos] Error:', error);
