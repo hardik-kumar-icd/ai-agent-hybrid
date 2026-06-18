@@ -3,7 +3,18 @@
     "url": "https://vimeo.com/577319295?fl=pl&fe=cm",
     "title": "General installation video"
   },
-  "byCategoryId": {},
+  "byCategoryId": {
+    "3": { "url": "https://visor.no/how-to-install#tabs-0", "title": "Rullegardiner" },
+    "14": { "url": "https://visor.no/how-to-install#tabs-2", "title": "Lamellgardiner" },
+    "19": { "url": "https://visor.no/how-to-install#tabs-3", "title": "Persienner" },
+    "25": { "url": "https://visor.no/how-to-install#tabs-4", "title": "Liftgardiner" },
+    "150": { "url": "https://visor.no/how-to-install#tabs-150", "title": "V-Premium, Standard modell Up & Down Plissegardin, Maks bredde 120cm." },
+    "151": { "url": "https://visor.no/how-to-install#tabs-151", "title": "V-Premium Up & Down Plissegardin, Spesial profil med magnet lukking i topp. Markedets beste pris." },
+    "152": { "url": "https://visor.no/how-to-install#tabs-152", "title": "Plissegardin Absolute, Up&Down Premium. Lukket profil med integrert lukking" },
+    "153": { "url": "https://visor.no/how-to-install#tabs-153", "title": "Plissegardin CS LUX, Up&Down. Opp - ned plisse" },
+    "155": { "url": "https://visor.no/how-to-install#tabs-155", "title": "Plissegardin Absolute Cordlock Premium. Snorbetjent" },
+    "156": { "url": "https://visor.no/how-to-install#tabs-156", "title": "Plisse for skråvindu" }
+  },
   "byCategoryKey": {
     "rullegardiner": {
       "url": "https://vimeo.com/400382645?fl=pl&fe=",
