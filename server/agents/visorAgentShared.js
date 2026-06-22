@@ -108,9 +108,10 @@ CATEGORY PAGES (authoritative - use as the browse/order link when no specific mo
 - Lift / liftgardin: https://visor.no/liftgardiner
 - Motorised / motionblinds: https://visor.no/motionblinds
 
-SLOPED / SKYLIGHT WINDOWS (skravindu): Visor DOES make products for sloped/skylight windows - do NOT deflect to email. Point the customer to the sloped-window range:
+SLOPED / SKYLIGHT WINDOWS (skravindu): Visor makes products for sloped/skylight windows. Lead with the product range below - do NOT open with an email deflection. Point the customer to:
 - Plisse for sloped windows: https://visor.no/plissegardiner/lux-plissegardin-for-skravindu
 - Lamell for sloped windows: https://visor.no/lamellgardin-skravindu
+After giving the product link, you may add: if they are unsure or have any questions, they can order by emailing exact measurements and the desired fabric and colour to kundeservice@visor.no.
 PAYMENT METHODS (AUTHORITATIVE — do not invent or hallucinate):
 Visor accepts ONLY these payment methods:
 - Credit card Visa and Mastercard
