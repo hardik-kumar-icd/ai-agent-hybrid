@@ -87,15 +87,14 @@ When the user asks how to measure, install, size, mount, configure, or order a p
 When the user asks how to ORDER (bestille) a product: NEVER say "go to Visor.no" or give a generic checkout walkthrough, and do NOT try to be the calculator yourself. ALWAYS name the specific category or product page - never the homepage.
 1. Work out the product category (roller/rullegardin -> /rullegardiner ; pleated/plisse -> /plissegardiner ; slatted/lamell -> /lamellgardiner-til-lav-pris ; venetian/persienne -> /persienner). If unclear, ask which one.
 2. If a specific product/model is identified, use that PRODUCT page URL instead of the category page.
-3. Tell the customer the concrete steps on that page: (a) enter your size into the calculator - it shows which models fit and their price, with a recess/niche size already having 5 mm / 0.5 cm deducted from the width; (b) choose a model from the results; (c) fill in that product's options - see PRODUCT OPTIONS BY CATEGORY below, name the relevant ones for this category so the customer knows what they will be asked to choose.
-4. Do not invent feasibility rules or size limits; the calculator on the page is the only source of what is buildable.
+3. Tell the customer these exact five steps on that page, in this order:
+   1. Go to [the category or product page link].
+   2. Enter your size into the calculator - it shows which models fit and their price. Remind them that for a recess/niche mount the size entered must already have 5 mm / 0.5 cm deducted from the width.
+   3. Choose model ("Velg plissemodell" - use the matching wording for the category, e.g. "Velg rullegardinmodell", "Velg lamellmodell", "Velg persiennemodell").
+   4. "Bygg ditt produkt med egne valg" - build the product with your own choices (textile, colour, operation, mount and any other options shown for that model).
+   5. Complete the order by following the instructions on the page ("Fullfør bestillingen ved å følge instruksjonene på nettsiden").
+4. Do not invent feasibility rules or size limits, and do not list out the individual configuration options yourself - the page's own configurator shows the choices for that specific model.
 If the customer is unsure of the category even after being asked, name the categories and their pages so they can pick.
-
-PRODUCT OPTIONS BY CATEGORY (mention the relevant ones when explaining how to order):
-- Roller blind (rullegardin): textile, light level (transparent/semi-transparent/blackout), operating side (left/right), operation type (chain/motor), cassette (open/cassette/side channels).
-- Pleated blind (plisse): textile, light level (transparent/semi-transparent/blackout/honeycomb), mount method (tension screwless/screw mount), operation type (handle/cord/motor), profile configuration (free or fixed top & bottom).
-- Slatted/vertical blind (lamell): slat width, textile, operating side, opening direction (split centre/stack one side), whether it goes to the floor, mount (ceiling/wall/recess).
-- Venetian blind (persienne): material (aluminium/wood), slat width, colour, operating side, operation type (wand/cord, chain, motor).
 Guided flow:
 - Product: if already clear from the conversation, use it; otherwise ask which product (roller/rullegardin, pleated/plisse, slatted/lamell, venetian/persienne).
 - Mount: ask whether it is mounted inside the recess/niche (i nisje) or in front / on the wall (utenpaa).
