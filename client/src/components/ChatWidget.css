@@ -854,16 +854,17 @@
 
 .chat-greeting-bubble {
   position: absolute;
-  bottom: 8px;
+  top: 0;
   left: 72px;
-  max-width: 240px;
-  background: white;
-  color: #333;
-  padding: 12px 32px 12px 14px;
+  width: 260px;
+  background: #ffffff;
+  color: #2a2a2a;
+  padding: 14px 32px 14px 16px;
   border-radius: 14px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
-  font-size: 13.5px;
-  line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
   white-space: normal;
   animation: greetingFadeIn 0.3s ease-out;
   z-index: 1;
@@ -873,12 +874,12 @@
   content: '';
   position: absolute;
   left: -7px;
-  bottom: 18px;
+  top: 22px;
   width: 0;
   height: 0;
   border-top: 7px solid transparent;
   border-bottom: 7px solid transparent;
-  border-right: 7px solid white;
+  border-right: 7px solid #ffffff;
 }
 
 .chat-greeting-close {
