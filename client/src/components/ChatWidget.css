@@ -851,3 +851,66 @@
   margin-left: 4px;
   animation: feedback-fade-in 0.25s ease-out;
 }
+
+.chat-greeting-bubble {
+  position: absolute;
+  bottom: 8px;
+  left: 72px;
+  max-width: 240px;
+  background: white;
+  color: #333;
+  padding: 12px 32px 12px 14px;
+  border-radius: 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+  font-size: 13.5px;
+  line-height: 1.4;
+  white-space: normal;
+  animation: greetingFadeIn 0.3s ease-out;
+  z-index: 1;
+}
+
+.chat-greeting-bubble::after {
+  content: '';
+  position: absolute;
+  left: -7px;
+  bottom: 18px;
+  width: 0;
+  height: 0;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-right: 7px solid white;
+}
+
+.chat-greeting-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: #999;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.chat-greeting-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #333;
+}
+
+@keyframes greetingFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
