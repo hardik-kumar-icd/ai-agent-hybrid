@@ -790,7 +790,7 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                     </svg>
                   </div>
                   <div className="chat-header-text">
-                    <h3>Visor.no Assistant</h3>
+                    <h3>Visor Assistent – din hjelp døgnet rundt</h3>
                   </div>
                 </div>
                 <div className="chat-header-right-group">
