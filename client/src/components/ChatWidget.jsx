@@ -101,6 +101,7 @@ async function streamChat(apiBaseUrl, payload, conversationId, onToken) {
 function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToken }) {
   const isAdmin = mode === 'admin';
   const [isOpen, setIsOpen] = useState(false);
+  const [showGreeting, setShowGreeting] = useState(false);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -192,6 +193,27 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
       inputRef.current.focus();
     }
   }, [isOpen]);
+
+  // Launcher greeting bubble: show once after a short delay, never again once
+  // dismissed or once the user opens the chat (persisted per-browser).
+  useEffect(() => {
+    const dismissed = localStorage.getItem('visor_greeting_dismissed');
+    if (dismissed) return;
+    const timer = setTimeout(() => setShowGreeting(true), 2500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      setShowGreeting(false);
+      localStorage.setItem('visor_greeting_dismissed', '1');
+    }
+  }, [isOpen]);
+
+  const dismissGreeting = () => {
+    setShowGreeting(false);
+    localStorage.setItem('visor_greeting_dismissed', '1');
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1166,6 +1188,19 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
       )}
 
       {/* Chat Button */}
+      {showGreeting && !isOpen && (
+        <div className="chat-greeting-bubble">
+          <button
+            type="button"
+            className="chat-greeting-close"
+            onClick={dismissGreeting}
+            aria-label="Lukk"
+          >
+            ×
+          </button>
+          Visor Assistent – din hjelp døgnet rundt
+        </div>
+      )}
       <button
         className="chat-button"
         onClick={handleToggle}
