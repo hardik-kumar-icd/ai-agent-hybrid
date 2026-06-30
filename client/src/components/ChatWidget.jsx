@@ -866,6 +866,12 @@ function ChatWidget({ baseUrl, themeColor, accentColor, mode = 'user', adminToke
                   </>
                 )}
                 {messages.map((msg, idx) => {
+                  // Skip the optimistic empty assistant placeholder while streaming hasn't
+                  // produced any tokens yet - the isLoading bubble below already shows the
+                  // typing indicator, so rendering this too creates a duplicate/static pill.
+                  if (msg.role === 'assistant' && !msg.content) {
+                    return null;
+                  }
                   const isLastAssistantMessage = idx === messages.length - 1 && msg.role === 'assistant';
                   // Drop 3 — show feedback bar for assistant messages that have a server-issued messageId
                   const showFeedback = msg.role === 'assistant' && msg.messageId && msg.content;
