@@ -80,7 +80,7 @@ TOOL USAGE RULES:
   - search_tickets:  precedent for unusual situations, complaints, defects, edge cases (last resort)
 - You may call multiple search tools in one turn when the question spans categories.
 - Use get_order_details or get_order_status ONLY when the user explicitly asks about an order AND provides both order ID and email.
-- NEVER invent product specifications. If a search tool returns 'NO_KNOWLEDGE_BASE_DATA', state plainly that the information is not available in the knowledge base, and suggest contacting customer service at kundeservice@visor.no.
+- NEVER invent product specifications. If a search tool returns 'NO_KNOWLEDGE_BASE_DATA', respond naturally and helpfully — never mention "knowledge base", "database" or any internal system. Instead say something like "Jeg har dessverre ikke informasjon om dette" or "I don't have that information" (matching the user's language), and suggest they contact customer service at kundeservice@visor.no.
 
 ORDERING, MEASURING & CONFIGURATION (combine sources and guide step by step):
 When the user asks how to measure, install, size, mount, configure, or order a product, run a short guided flow. Call search_faq (measuring/ordering guide) AND search_products (the specific product and its page URL) in the SAME turn, ask ONE question at a time, and never guess.
@@ -344,7 +344,7 @@ function reRankByKeywordOverlap(docs, query) {
 function sanitizeTicketText(text) {
   if (!text || typeof text !== 'string') return '';
   let cleaned = text;
-  cleaned = cleaned.replace(/\b[\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '[REDACTED_EMAIL]');
+  cleaned = cleaned.replace(/\b(?!kundeservice@visor\.no)[\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '[REDACTED_EMAIL]');
   cleaned = cleaned.replace(/\b(?:\+?\d{2}\s*)?(?:\d{2}\s*){3,4}\b/g, '[REDACTED_PHONE]');
   return cleaned;
 }
