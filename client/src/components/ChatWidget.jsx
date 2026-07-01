@@ -10,7 +10,7 @@ import './ChatWidget.css';
  */
 const WELCOME_MESSAGE = 'Hei! Jeg er din assistent på visor.no. Velg en kategori eller skriv spørsmålet ditt nedenfor, så skal jeg hjelpe deg så godt som mulig.';
 /** Veiledninger (måling / montering) — same CMS page customers use on the shop */
-const GUIDES_PAGE_URL = 'https://test.visor.no/how-to-install/';
+const GUIDES_PAGE_URL = 'https://visor.no/how-to-install/';
 const ENGLISH_PLACEHOLDER = 'Type your message here...';
 const NORWEGIAN_PLACEHOLDER = 'Skriv din melding her...';
 const ENGLISH_DETECT_REGEX = /\b(what|how|order|status|the|is|can|do|does|please|help|want|need|hello|hi|when|where|which|why|tell|me|about)\b/i;
