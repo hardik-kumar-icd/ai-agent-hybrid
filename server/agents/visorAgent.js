@@ -56,7 +56,7 @@ function sanitizeTicketText(text) {
   if (!text || typeof text !== 'string') return '';
   let cleaned = text;
   // Emails
-  cleaned = cleaned.replace(/\b[\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '[REDACTED_EMAIL]');
+  cleaned = cleaned.replace(/\b(?!kundeservice@visor\.no)[\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '[REDACTED_EMAIL]');
   // Phone numbers (very simple patterns, best-effort)
   cleaned = cleaned.replace(/\b(?:\+?\d{2}\s*)?(?:\d{2}\s*){3,4}\b/g, '[REDACTED_PHONE]');
   return cleaned;
