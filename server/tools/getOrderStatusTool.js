@@ -52,10 +52,46 @@ async function getOrderStatusTool({ order_id, email }) {
           meta => meta.key === '_delivery_date' || meta.key === 'delivery_date'
         )?.value || null;
 
+        // Translate internal Magento status codes to customer-facing Norwegian
+        const STATUS_MAP = {
+          'produseres ks': 'Produseres',
+          'produseres ds': 'Produseres',
+          'produseres dm': 'Produseres',
+          'produseres su': 'Produseres',
+          'produseres na': 'Produseres',
+          'produseres ff': 'Produseres',
+          'produseres dl': 'Produseres',
+          'produksjon hentepakke': 'Produseres',
+          'sendt produksjon': 'Sendt til produksjon',
+          'sendt fra fabrikken': 'Sendt fra fabrikken – på vei til oss',
+          'ventende forsendelse': 'Ordren er mottatt og på vei til oss. Den vil bli sendt til deg så snart den ankommer lageret vårt.',
+          'ventende produksjon': 'Venter på produksjon',
+          'skal sendes ut': 'Skal snart sendes',
+          'kunde bedt om utsatt utgående': 'Utsatt etter ønske',
+          'forsinket levering': 'Forsinket levering',
+          'levert': 'Levert',
+          'levert 2018': 'Levert',
+          'levert 2019': 'Levert',
+          'overføring': 'Under behandling',
+          'pending': 'Venter på betaling',
+          'pending payment': 'Venter på betaling',
+          'pending paypal': 'Venter på betaling',
+          'payment review': 'Under betalingskontroll',
+          'on hold': 'På vent – kontakt kundeservice',
+          'canceled': 'Kansellert',
+          'slettet': 'Kansellert',
+          'suspected fraud': 'Kontakt kundeservice',
+          'paypal canceled reversal': 'Kontakt kundeservice',
+          'paypal reversed': 'Kontakt kundeservice',
+          'dintero pending approval': 'Venter på godkjenning',
+        };
+        const rawStatus1 = (order.status || '').toLowerCase().trim();
+        const translatedStatus1 = STATUS_MAP[rawStatus1] || order.status;
+
         // Build order data without total/currency (will be sanitized)
         orderData = {
           id: order.id.toString(),
-          status: order.status,
+          status: translatedStatus1,
           tracking: tracking,
           delivery_date: deliveryDate
         };
@@ -121,9 +157,11 @@ async function getOrderStatusTool({ order_id, email }) {
         const deliveryDate = order.extension_attributes?.shipping_assignments?.[0]
           ?.shipping?.address?.extension_attributes?.delivery_date || null;
 
+        const rawStatus2 = (order.status || '').toLowerCase().trim();
+        const translatedStatus2 = STATUS_MAP[rawStatus2] || order.status;
         orderData = {
           id: order.increment_id || order.entity_id.toString(),
-          status: order.status,
+          status: translatedStatus2,
           tracking: tracking,
           delivery_date: deliveryDate
         };
