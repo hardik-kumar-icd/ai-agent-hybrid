@@ -1,5 +1,5 @@
 /**
- * One-shot FAQ scraper for https://test.visor.no/faq
+ * One-shot FAQ scraper for https://visor.no/faq
  *
  * Purpose: visor_faqs.json was never migrated from Render. This script
  * scrapes the live FAQ page (Magento 2 + Hyva theme + Alpine.js tabs) and
@@ -29,7 +29,7 @@ const path = require('path');
 const fs = require('fs');
 const cheerio = require('cheerio');
 
-const FAQ_URL = 'https://test.visor.no/faq';
+const FAQ_URL = 'https://visor.no/faq';
 const OUTPUT_PATH = path.join(__dirname, '..', '..', 'visor_faqs.json');
 
 // Tab name -> human-readable category label (matches what's shown in UI)
