@@ -75,6 +75,9 @@ const SINGLE_PRODUCT_DETAIL_REGEX = /^(\s*)(tell me about|tell about|hva er|hvad
  * @param {Array<{role:string,content:string}>} [history] - Recent conversation
  * @returns {'fast_path' | 'order' | 'complex'}
  */
+const EMAIL_REGEX = /^[\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+const ORDER_NUMBER_IN_HISTORY_REGEX = /\b\d{4,}\b/;
+
 function classifyQuery(message, history = []) {
   if (!message || typeof message !== 'string') return 'complex';
 
@@ -83,6 +86,16 @@ function classifyQuery(message, history = []) {
 
   // 1) Order intent — always wins, has its own toolchain
   if (ORDER_DETECT_REGEX.test(m)) return 'order';
+
+  // 1b) Email-only follow-up after an order question in history
+  // If the user just typed an email and recent history contains an order number,
+  // this is the email follow-up to a "what is my order status" question.
+  if (EMAIL_REGEX.test(m) && history.length > 0) {
+    const recentHistory = history.slice(-4).map(h => h.content || '').join(' ');
+    if (ORDER_DETECT_REGEX.test(recentHistory) || ORDER_NUMBER_IN_HISTORY_REGEX.test(recentHistory)) {
+      return 'order';
+    }
+  }
 
   // 2) References previous turn → needs full conversation context
   //    (Only treat as complex if history exists; otherwise the reference is moot)
