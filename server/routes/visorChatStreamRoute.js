@@ -173,7 +173,7 @@ router.post('/', sessionMiddleware, validateMessage, async (req, res) => {
     // Falls through to the agent for: category!='order', missing order/email,
     // or to recover when extraction worked but category wasn't set explicitly.
     // -----------------------------------------------------------------------
-    if (category === 'order' && finalOrderId && finalEmail) {
+    if (finalOrderId && finalEmail) {
       const directStart = Date.now();
       let directText = '';
       let directOk = false;
