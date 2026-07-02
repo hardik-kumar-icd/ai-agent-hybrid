@@ -20,6 +20,47 @@ async function getOrderStatusTool({ order_id, email }) {
     const { platform, endpoints, auth } = platformConfig;
     let orderData;
 
+    // Translate internal Magento/WooCommerce status codes to customer-facing Norwegian.
+    // Defined here (shared scope) so both the wordpress and magento paths can use it.
+    const STATUS_MAP = {
+      'produseres ks': 'Produseres',
+      'produseres ds': 'Produseres',
+      'produseres dm': 'Produseres',
+      'produseres su': 'Produseres',
+      'produseres na': 'Produseres',
+      'produseres ff': 'Produseres',
+      'produseres dl': 'Produseres',
+      'produksjon hentepakke': 'Produseres',
+      'sendt produksjon': 'Sendt til produksjon',
+      'sendt fra fabrikken': 'Sendt fra fabrikken – på vei til oss',
+      'ventende forsendelse': 'Ordren er mottatt og på vei til oss. Den vil bli sendt til deg så snart den ankommer lageret vårt.',
+      'ventende produksjon': 'Venter på produksjon',
+      'skal sendes ut': 'Skal snart sendes',
+      'kunde bedt om utsatt utgaende': 'Utsatt etter ønske',
+      'forsinket levering': 'Forsinket levering',
+      'levert': 'Levert',
+      'levert 2018': 'Levert',
+      'levert 2019': 'Levert',
+      'overfoering': 'Under behandling',
+      'pending': 'Venter på betaling',
+      'pending payment': 'Venter på betaling',
+      'pending paypal': 'Venter på betaling',
+      'payment review': 'Under betalingskontroll',
+      'on hold': 'På vent – kontakt kundeservice',
+      'canceled': 'Kansellert',
+      'slettet': 'Kansellert',
+      'suspected fraud': 'Kontakt kundeservice',
+      'paypal canceled reversal': 'Kontakt kundeservice',
+      'paypal reversed': 'Kontakt kundeservice',
+      'dintero pending approval': 'Venter på godkjenning',
+    };
+
+    // Normalize a raw status string: lowercase, trim, replace underscores with spaces.
+    // Magento stores statuses like 'produseres_dm'; the map uses 'produseres dm'.
+    function normalizeStatus(raw) {
+      return (raw || '').toLowerCase().trim().replace(/_/g, ' ');
+    }
+
     if (platform === 'wordpress') {
       // WordPress/WooCommerce API call
       const apiUrl = `${endpoints.wordpress}/orders/${order_id}`;
@@ -52,46 +93,12 @@ async function getOrderStatusTool({ order_id, email }) {
           meta => meta.key === '_delivery_date' || meta.key === 'delivery_date'
         )?.value || null;
 
-        // Translate internal Magento status codes to customer-facing Norwegian
-        const STATUS_MAP = {
-          'produseres ks': 'Produseres',
-          'produseres ds': 'Produseres',
-          'produseres dm': 'Produseres',
-          'produseres su': 'Produseres',
-          'produseres na': 'Produseres',
-          'produseres ff': 'Produseres',
-          'produseres dl': 'Produseres',
-          'produksjon hentepakke': 'Produseres',
-          'sendt produksjon': 'Sendt til produksjon',
-          'sendt fra fabrikken': 'Sendt fra fabrikken – på vei til oss',
-          'ventende forsendelse': 'Ordren er mottatt og på vei til oss. Den vil bli sendt til deg så snart den ankommer lageret vårt.',
-          'ventende produksjon': 'Venter på produksjon',
-          'skal sendes ut': 'Skal snart sendes',
-          'kunde bedt om utsatt utgående': 'Utsatt etter ønske',
-          'forsinket levering': 'Forsinket levering',
-          'levert': 'Levert',
-          'levert 2018': 'Levert',
-          'levert 2019': 'Levert',
-          'overføring': 'Under behandling',
-          'pending': 'Venter på betaling',
-          'pending payment': 'Venter på betaling',
-          'pending paypal': 'Venter på betaling',
-          'payment review': 'Under betalingskontroll',
-          'on hold': 'På vent – kontakt kundeservice',
-          'canceled': 'Kansellert',
-          'slettet': 'Kansellert',
-          'suspected fraud': 'Kontakt kundeservice',
-          'paypal canceled reversal': 'Kontakt kundeservice',
-          'paypal reversed': 'Kontakt kundeservice',
-          'dintero pending approval': 'Venter på godkjenning',
-        };
-        const rawStatus1 = (order.status || '').toLowerCase().trim();
-        const translatedStatus1 = STATUS_MAP[rawStatus1] || order.status;
+        const translatedStatus = STATUS_MAP[normalizeStatus(order.status)] || order.status;
 
         // Build order data without total/currency (will be sanitized)
         orderData = {
           id: order.id.toString(),
-          status: translatedStatus1,
+          status: translatedStatus,
           tracking: tracking,
           delivery_date: deliveryDate
         };
@@ -107,7 +114,8 @@ async function getOrderStatusTool({ order_id, email }) {
         }
       }
     } else if (platform === 'magento') {
-      // Magento 2: customers see increment_id (Order Number), not entity_id. Look up by increment_id first, then fallback to entity_id.
+      // Magento 2: customers see increment_id (Order Number), not entity_id.
+      // Look up by increment_id first, then fallback to entity_id.
       const headers = {
         'Authorization': `Bearer ${auth.magento.bearerToken}`,
         'Content-Type': 'application/json'
@@ -124,7 +132,7 @@ async function getOrderStatusTool({ order_id, email }) {
           order = items[0];
         }
 
-        // 2) Fallback: if no result and order_id looks like numeric entity_id, try direct GET by entity_id
+        // 2) Fallback: if no result and order_id looks like numeric entity_id, try direct GET
         if (!order && /^\d+$/.test(String(order_id).trim())) {
           const directUrl = `${endpoints.magento}/orders/${order_id}`;
           try {
@@ -157,11 +165,11 @@ async function getOrderStatusTool({ order_id, email }) {
         const deliveryDate = order.extension_attributes?.shipping_assignments?.[0]
           ?.shipping?.address?.extension_attributes?.delivery_date || null;
 
-        const rawStatus2 = (order.status || '').toLowerCase().trim();
-        const translatedStatus2 = STATUS_MAP[rawStatus2] || order.status;
+        const translatedStatus = STATUS_MAP[normalizeStatus(order.status)] || order.status;
+
         orderData = {
           id: order.increment_id || order.entity_id.toString(),
-          status: translatedStatus2,
+          status: translatedStatus,
           tracking: tracking,
           delivery_date: deliveryDate
         };
