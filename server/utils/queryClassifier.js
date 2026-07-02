@@ -32,8 +32,7 @@
  */
 
 // ---- Order intent ----
-const ORDER_DETECT_REGEX = /\b(ordrestatus|order status|where is my order|hvor er min ordre|track order|spor ordre|order number|ordrenummer|order id|orderid|my order|min ordre)\b/i;
-
+const ORDER_DETECT_REGEX = /\b(ordrestatus|order status|where is my order|hvor er min ordre|track order|spor ordre|order number|ordrenummer|order id|orderid|my order|min ordre|ordre\s+\d{4,}|\d{4,}\s+ordre|bestilling\s+\d{4,}|\d{4,}\s+bestilling|når kommer|when.*order|levering.*ordre|ordre.*levering|forvente.*ordre|ordre.*forvente|status.*ordre|ordre.*status)\b/i;
 // ---- Context-dependent words (need history → complex) ----
 const CONTEXT_REFERENCE_REGEX = /\b(den|det|denne|disse|the (product|model|item|one)|that (product|model|item|one)|previous|above|tidligere|over|nevnt|mentioned|sist|last)\b/i;
 
