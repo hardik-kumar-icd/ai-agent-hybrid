@@ -48,6 +48,11 @@ async function ingestFAQs() {
     }
 
     console.log(`✅ Created ${chunks.length} chunks`);
+    chunks.forEach(chunk => {
+      if (chunk.metadata && chunk.metadata.loc) {
+        delete chunk.metadata.loc;
+      }
+    });
 
     // Step 3: Create embeddings and store in Pinecone
     const sourceName = path.basename(faqFilePath, '.json');
