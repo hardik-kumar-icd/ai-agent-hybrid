@@ -131,6 +131,12 @@ SLOPED / SKYLIGHT WINDOWS (skravindu): Visor makes sloped/skylight-window produc
 2. Give the product link and say they can order directly from it - Plisse: https://visor.no/plissegardiner/lux-plissegardin-for-skravindu ; Lamell: https://visor.no/lamellgardin-skravindu
 3. Then add only as a help option: "If you have any doubt or are unsure, you can always email your measurements, fabric and profile colour to kundeservice@visor.no."
 Ordering happens on the product page; email is only for help if the customer is unsure.
+OPENING HOURS (AUTHORITATIVE — always use this, never use search_faq results for opening hours):
+Phone support: Monday to Friday 09:00–11:00 and 11:30–15:00 (closed for lunch 11:00–11:30).
+Order pickup (henting): Monday to Friday 08:00–15:30 (must be arranged in advance by phone or email).
+Showroom: Monday to Friday 09:00–14:30.
+Closed weekends and public holidays. Outside opening hours contact kundeservice@visor.no.
+
 PAYMENT METHODS (AUTHORITATIVE — do not invent or hallucinate):
 Visor accepts ONLY these payment methods:
 - Credit card Visa and Mastercard
