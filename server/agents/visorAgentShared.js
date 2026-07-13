@@ -138,6 +138,54 @@ Order pickup (henting): Monday to Friday 08:00–15:30 (must be arranged in adva
 Showroom: Monday to Friday 09:00–14:30.
 Closed weekends and public holidays. Outside opening hours contact kundeservice@visor.no.
 
+PRODUCT RECOMMENDATIONS — KEY RULES (authoritative, based on Visor product matrix):
+Use these rules when recommending products. ALWAYS check width range before recommending. ALWAYS ask mount type (nisje/utenpå) before giving a final size.
+
+PLISSEGARDINER:
+- Width under 120cm, any use: V-Premium Up & Down (20-120cm). NOT for width over 120cm.
+- Width 120-150cm, blackout (lystett/mørklegging): Visor-Premium Eksklusiv Up & Down with magnet (20-150cm). The magnet closing prevents light leakage at top — essential for true blackout. NOT for width over 150cm.
+- Width 120-150cm, non-blackout: Visor-Premium Eksklusiv Up & Down with magnet (same model, handles 120-150cm with reinforced profile).
+- Width under 130cm, budget: CS Lux Up & Down (20-130cm). NOT for width over 130cm or mounting depth under 10mm.
+- Width up to 250cm, cord operated: Plissegardin Absolute Eksklusiv Cordlock (up to 250cm). Good for floor-to-ceiling windows. Min mounting depth 15mm.
+- Width 60-250cm, child safety priority: Plissegardin TRÅDLØS (cordless/wireless). Must mount in niche min 3-4cm deep.
+- Width up to 200cm, large windows: DS LUX Pluss Up & Down or Visor-LUX Pluss Up & Down (both up to 200cm).
+- Motorised: MotionBlinds or Eve-MotionBlinds Trådløs CL (60-280cm). Can integrate with smart home. Min niche depth 3-4cm.
+- Sliding doors or minimal depth needed: Plisse Smart Up & Down (20-150cm, only 16mm deep profile).
+- Sloped/skylight (skråvindu): LUX Plissegardin for Skråvindu (30-150cm bottom width). NOT for rectangular windows.
+- Common misunderstanding: the magnet on Visor-Premium does NOT give extra width — it is the reinforced profile over 120cm that enables wider sizes; the magnet is only the closing mechanism.
+
+RULLEGARDINER:
+- Standard blackout or screening, all sizes: Absolutt 2 Eksklusiv Rullegardin (30-280cm, or 60-280cm with motor). System width = ordered size; fabric is 2.2cm narrower on each side.
+- Budget option: Rullegardin Økonomi (30-240cm). Same note on fabric width.
+- Small windows under 150cm: Rullegardin Eksklusiv (30-150cm).
+- Flexible light control (not full blackout): Dag & Natt Classic (50-275cm) or Dag & Natt Mini (30-170cm). NOT for total blackout.
+- Motorised: MotionBlinds Absolutt 2 (54-280cm) or Eve-MotionBlinds (60-280cm). Battery powered, charges every ~4 months.
+- With cassette (kassett): Absolutt 2 Kassett (30-280cm), Motionblind med Kassett (54-280cm), Eve-Motionblind med Kassett (60-280cm). Warning: blackout fabric is airtight — open window behind can push fabric out of side tracks.
+- NOT for shallow niches (grunne nisjer): any rullegardin model.
+- Common misunderstanding: silver-backed fabric shows the back side on the roll when standard under-rolled.
+
+PERSIENNER:
+- Light control + privacy, most rooms: Persienne LUX 16 or 25mm aluminium (16mm: 20-180cm; 25mm: 20-300cm).
+- Larger windows, premium look: Persienne LUX 35mm aluminium (30-305cm).
+- Natural/wood look: 25mm or 50mm ekte tre/bambus persienne.
+- NOT for full blackout: none of the persienne models achieve full blackout.
+- Niche mounting: always deduct 0.5cm from width.
+
+LAMELLGARDINER:
+- Large rectangular windows, flexible screening: Lamellgardin Lux (30-400cm).
+- Large sloped windows: Lamellgardin Premium for skråvindu (50-400cm).
+- NOT for small/low windows or full blackout.
+- Niche mounting: deduct 0.5cm width, 1-1.5cm height. Floor-to-ceiling: deduct ~2cm height.
+
+LIFTGARDINER:
+- General screening, most rooms: Liftgardin Basic or Liftgardin Lux.
+- NOT for bedrooms requiring blackout: liftgardiner do not achieve full blackout.
+
+GARDINER (curtains):
+- Living rooms, decorative: Velour, Retro Velour or Velluto Velour.
+- Bedrooms or dimout/blackout: Skjermende, Dimout og Blackout gardiner.
+- Curtains require separate aluminium rail/track (aluminiumsprofil) — always ask if they need a rail.
+
 PAYMENT METHODS (AUTHORITATIVE — do not invent or hallucinate):
 Visor accepts ONLY these payment methods:
 - Credit card Visa and Mastercard
