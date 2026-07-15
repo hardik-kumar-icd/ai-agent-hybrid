@@ -7,6 +7,9 @@ const { logOrderLookup } = require('../utils/securityLogger');
 
 const router = express.Router();
 
+// Bounds worst-case hang if Magento is slow or unresponsive.
+const CMS_REQUEST_TIMEOUT_MS = 10000;
+
 function loadInstallVideoMapping() {
   const mappingPath = path.join(__dirname, '..', 'data', 'installVideos.json');
   if (!fs.existsSync(mappingPath)) {
@@ -123,7 +126,7 @@ async function fetchMagentoOrderWithItems({ order_id, email }) {
     `searchCriteria[filter_groups][0][filters][0][value]=${encodeURIComponent(String(order_id).trim())}&` +
     `searchCriteria[filter_groups][0][filters][0][condition_type]=eq`;
 
-  const searchResponse = await axios.get(searchUrl, { headers });
+  const searchResponse = await axios.get(searchUrl, { headers, timeout: CMS_REQUEST_TIMEOUT_MS });
   const items = searchResponse.data?.items || [];
   const order = items[0] || null;
   if (!order) return null;
@@ -174,7 +177,7 @@ function buildProductUrl(urlKey) {
 async function fetchMagentoCategoryName(categoryId, headers) {
   const { endpoints } = platformConfig;
   const url = `${endpoints.magento}/categories/${encodeURIComponent(String(categoryId).trim())}`;
-  const resp = await axios.get(url, { headers });
+  const resp = await axios.get(url, { headers, timeout: CMS_REQUEST_TIMEOUT_MS });
   return resp.data?.name || null;
 }
 
@@ -198,7 +201,7 @@ async function resolveProductCategoriesDebug({ productId, sku, headers }) {
   if (sku) {
     const url = `${endpoints.magento}/products/${encodeURIComponent(String(sku).trim())}`;
     try {
-      const resp = await axios.get(url, { headers: h });
+      const resp = await axios.get(url, { headers: h, timeout: CMS_REQUEST_TIMEOUT_MS });
       const ids = extractCategoryIdsFromProductPayload(resp.data).filter((n) => Number.isFinite(n));
       const urlKey = extractUrlKeyFromProductPayload(resp.data);
       steps.push({
@@ -226,7 +229,7 @@ async function resolveProductCategoriesDebug({ productId, sku, headers }) {
       `searchCriteria[filter_groups][0][filters][0][value]=${encodeURIComponent(String(productId).trim())}&` +
       `searchCriteria[filter_groups][0][filters][0][condition_type]=eq`;
     try {
-      const resp = await axios.get(url, { headers: h });
+      const resp = await axios.get(url, { headers: h, timeout: CMS_REQUEST_TIMEOUT_MS });
       const product = resp.data?.items?.[0];
       const ids = extractCategoryIdsFromProductPayload(product).filter((n) => Number.isFinite(n));
       const urlKey = extractUrlKeyFromProductPayload(product);

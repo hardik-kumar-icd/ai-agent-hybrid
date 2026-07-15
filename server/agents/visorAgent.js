@@ -476,160 +476,176 @@ Be helpful, professional, and expert-led.`;
       toolCalls = response.additional_kwargs.tool_calls;
     }
 
-    while (toolCalls && toolCalls.length > 0) {
-      const toolResults = [];
+    // A single LLM turn can request multiple independent tool calls — run them
+    // concurrently instead of one-at-a-time so the turn only pays for the
+    // slowest call, not the sum. The rag_search case can short-circuit the
+    // whole function with a ticket-based direct answer; since that can no
+    // longer `return` straight out of this function from inside a parallel
+    // task, it's signalled back via `directAnswer` and handled by the caller.
+    async function executeToolCall(toolCall) {
+      try {
+        // Handle different tool call structures
+        // LangChain tool calls can have different formats:
+        // Format 1: { id, type, function: { name, arguments } } - OpenAI format
+        // Format 2: { name, args, type, id } - LangChain simplified format
+        let functionName, functionArgs, toolCallId;
 
-      for (const toolCall of toolCalls) {
+        if (toolCall.name && toolCall.args) {
+          // LangChain format: { name, args } - args is already an object
+          functionName = toolCall.name;
+          functionArgs = toolCall.args;
+        } else if (toolCall.function) {
+          // OpenAI format: { function: { name, arguments } } - arguments is a string
+          functionName = toolCall.function.name;
+          functionArgs = toolCall.function.arguments || '{}';
+        } else if (toolCall.name) {
+          // Fallback: { name, arguments }
+          functionName = toolCall.name;
+          functionArgs = toolCall.arguments || '{}';
+        } else {
+          console.error('Tool call structure unexpected:', JSON.stringify(toolCall, null, 2));
+          return null;
+        }
+
+        toolCallId = toolCall.id || toolCall.tool_call_id;
+
+        if (!functionName) {
+          console.error('Tool call missing function name:', JSON.stringify(toolCall, null, 2));
+          return null;
+        }
+
+        let result;
+        let args;
         try {
-          // Handle different tool call structures
-          // LangChain tool calls can have different formats:
-          // Format 1: { id, type, function: { name, arguments } } - OpenAI format
-          // Format 2: { name, args, type, id } - LangChain simplified format
-          let functionName, functionArgs, toolCallId;
-          
-          if (toolCall.name && toolCall.args) {
-            // LangChain format: { name, args } - args is already an object
-            functionName = toolCall.name;
-            functionArgs = toolCall.args;
-          } else if (toolCall.function) {
-            // OpenAI format: { function: { name, arguments } } - arguments is a string
-            functionName = toolCall.function.name;
-            functionArgs = toolCall.function.arguments || '{}';
-          } else if (toolCall.name) {
-            // Fallback: { name, arguments }
-            functionName = toolCall.name;
-            functionArgs = toolCall.arguments || '{}';
+          // args might already be an object (from toolCall.args) or a string (from function.arguments)
+          if (typeof functionArgs === 'string') {
+            args = JSON.parse(functionArgs);
+          } else if (typeof functionArgs === 'object' && functionArgs !== null) {
+            args = functionArgs;
           } else {
-            console.error('Tool call structure unexpected:', JSON.stringify(toolCall, null, 2));
-            continue;
-          }
-          
-          toolCallId = toolCall.id || toolCall.tool_call_id;
-
-          if (!functionName) {
-            console.error('Tool call missing function name:', JSON.stringify(toolCall, null, 2));
-            continue;
-          }
-
-          let result;
-          let args;
-          try {
-            // args might already be an object (from toolCall.args) or a string (from function.arguments)
-            if (typeof functionArgs === 'string') {
-              args = JSON.parse(functionArgs);
-            } else if (typeof functionArgs === 'object' && functionArgs !== null) {
-              args = functionArgs;
-            } else {
-              args = {};
-            }
-          } catch (parseError) {
-            console.error('Error parsing function arguments:', parseError);
             args = {};
           }
-
-          switch (functionName) {
-            case 'rag_search': {
-              const ragResult = await ragTool(args);
-              const kbHasSubstantive = hasSubstantiveKbContext(ragResult);
-              const sensitivePolicyQuery = isSensitivePolicyQuery(message);
-
-              // 1) KB has no real data (empty or only generic \"Fant ikke svar\" contact FAQ)
-              //    → prefer ticket-based answer if available.
-              if (!kbHasSubstantive) {
-                if (!sensitivePolicyQuery) {
-                  const ticketAnswer = await answerFromTickets(message);
-                  if (ticketAnswer && ticketAnswer.trim().length > 0) {
-                    return ticketAnswer;
-                  }
-                }
-              } else {
-                // 2) KB has substantive data, but we might still have a strong ticket match:
-                //    - high semantic score (>= 0.65; 0.65 allows cross-lingual e.g. EN query vs NO ticket), OR
-                //    - user query is a substring of a ticket chunk (e.g. they copied from a ticket).
-                if (!sensitivePolicyQuery) {
-                  try {
-                    const ticketQuery = await expandQueryForSearch(message);
-                    const topTickets = await searchTickets(ticketQuery, 5);
-                    const topScore = topTickets[0] && typeof topTickets[0].score === 'number' ? topTickets[0].score : null;
-                    const strongScore = topScore !== null && topScore >= 0.65;
-                    const substringMatch = topTickets.some((doc) => ticketChunkContainsQuery(doc.text, message));
-                    if (strongScore || substringMatch) {
-                      const ticketAnswer = await answerFromTickets(message);
-                      if (ticketAnswer && ticketAnswer.trim().length > 0) {
-                        return ticketAnswer;
-                      }
-                    }
-                  } catch (err) {
-                    // Fall back to KB result on ticket search failure
-                  }
-                }
-              }
-
-              // If we have substantive KB context but tickets were not clearly better,
-              // or ticket search failed, use the RAG result as usual.
-              result = ragResult;
-              break;
-            }
-            case 'get_order_details':
-              try {
-                result = await getOrderDetailsTool(args);
-                result = JSON.stringify(result);
-              } catch (err) {
-                console.error(`[Tool Error] get_order_details failed:`, err.message);
-                throw err;
-              }
-              break;
-            case 'get_order_status':
-              try {
-                result = await getOrderStatusTool(args);
-                result = JSON.stringify(result);
-              } catch (err) {
-                console.error(`[Tool Error] get_order_status failed:`, err.message);
-                throw err;
-              }
-              break;
-            default:
-              result = `Unknown tool: ${functionName}`;
-          }
-
-          toolResults.push({
-            tool_call_id: toolCallId,
-            role: 'tool',
-            name: functionName,
-            content: result
-          });
-        } catch (error) {
-          console.error('Error executing tool:', error);
-          console.error('Tool call that failed:', JSON.stringify(toolCall, null, 2));
-          
-          let functionName = 'unknown';
-          let toolCallId = 'unknown';
-          
-          try {
-            if (toolCall.function) {
-              functionName = toolCall.function.name || 'unknown';
-            } else if (toolCall.name) {
-              functionName = toolCall.name;
-            }
-            toolCallId = toolCall.id || toolCall.tool_call_id || 'unknown';
-          } catch (e) {
-            console.error('Error extracting tool call info:', e);
-          }
-          
-          toolResults.push({
-            tool_call_id: toolCallId,
-            role: 'tool',
-            name: functionName,
-            content: `Error: ${error.message}`
-          });
+        } catch (parseError) {
+          console.error('Error parsing function arguments:', parseError);
+          args = {};
         }
+
+        switch (functionName) {
+          case 'rag_search': {
+            const ragResult = await ragTool(args);
+            const kbHasSubstantive = hasSubstantiveKbContext(ragResult);
+            const sensitivePolicyQuery = isSensitivePolicyQuery(message);
+
+            // 1) KB has no real data (empty or only generic \"Fant ikke svar\" contact FAQ)
+            //    → prefer ticket-based answer if available.
+            if (!kbHasSubstantive) {
+              if (!sensitivePolicyQuery) {
+                const ticketAnswer = await answerFromTickets(message);
+                if (ticketAnswer && ticketAnswer.trim().length > 0) {
+                  return { directAnswer: ticketAnswer };
+                }
+              }
+            } else {
+              // 2) KB has substantive data, but we might still have a strong ticket match:
+              //    - high semantic score (>= 0.65; 0.65 allows cross-lingual e.g. EN query vs NO ticket), OR
+              //    - user query is a substring of a ticket chunk (e.g. they copied from a ticket).
+              if (!sensitivePolicyQuery) {
+                try {
+                  // Use the raw message directly rather than a second LLM-expanded
+                  // query — this is only a "does a strong ticket match exist"
+                  // check, not the primary retrieval, so it doesn't need its own
+                  // expansion call on top of the one ragTool() already did.
+                  const topTickets = await searchTickets(message, 5);
+                  const topScore = topTickets[0] && typeof topTickets[0].score === 'number' ? topTickets[0].score : null;
+                  const strongScore = topScore !== null && topScore >= 0.65;
+                  const substringMatch = topTickets.some((doc) => ticketChunkContainsQuery(doc.text, message));
+                  if (strongScore || substringMatch) {
+                    const ticketAnswer = await answerFromTickets(message);
+                    if (ticketAnswer && ticketAnswer.trim().length > 0) {
+                      return { directAnswer: ticketAnswer };
+                    }
+                  }
+                } catch (err) {
+                  // Fall back to KB result on ticket search failure
+                }
+              }
+            }
+
+            // If we have substantive KB context but tickets were not clearly better,
+            // or ticket search failed, use the RAG result as usual.
+            result = ragResult;
+            break;
+          }
+          case 'get_order_details':
+            try {
+              result = await getOrderDetailsTool(args);
+              result = JSON.stringify(result);
+            } catch (err) {
+              console.error(`[Tool Error] get_order_details failed:`, err.message);
+              throw err;
+            }
+            break;
+          case 'get_order_status':
+            try {
+              result = await getOrderStatusTool(args);
+              result = JSON.stringify(result);
+            } catch (err) {
+              console.error(`[Tool Error] get_order_status failed:`, err.message);
+              throw err;
+            }
+            break;
+          default:
+            result = `Unknown tool: ${functionName}`;
+        }
+
+        return {
+          tool_call_id: toolCallId,
+          role: 'tool',
+          name: functionName,
+          content: result
+        };
+      } catch (error) {
+        console.error('Error executing tool:', error);
+        console.error('Tool call that failed:', JSON.stringify(toolCall, null, 2));
+
+        let functionName = 'unknown';
+        let toolCallId = 'unknown';
+
+        try {
+          if (toolCall.function) {
+            functionName = toolCall.function.name || 'unknown';
+          } else if (toolCall.name) {
+            functionName = toolCall.name;
+          }
+          toolCallId = toolCall.id || toolCall.tool_call_id || 'unknown';
+        } catch (e) {
+          console.error('Error extracting tool call info:', e);
+        }
+
+        return {
+          tool_call_id: toolCallId,
+          role: 'tool',
+          name: functionName,
+          content: `Error: ${error.message}`
+        };
       }
+    }
+
+    while (toolCalls && toolCalls.length > 0) {
+      const rawResults = await Promise.all(toolCalls.map(executeToolCall));
+
+      const directAnswerResult = rawResults.find((r) => r && r.directAnswer);
+      if (directAnswerResult) {
+        return directAnswerResult.directAnswer;
+      }
+
+      const toolResults = rawResults.filter(Boolean);
 
       // Add tool results and get next response
       messages.push(response);
       messages.push(...toolResults);
       response = await model.invoke(messages);
-      
+
       // Update toolCalls for next iteration - check all possible locations
       toolCalls = [];
       if (response.tool_calls && Array.isArray(response.tool_calls)) {
