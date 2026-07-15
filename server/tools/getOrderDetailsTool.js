@@ -3,13 +3,14 @@ const path = require('path');
 const { sanitizeOrderData } = require('../utils/piiFilter');
 const { getOrderStatusTool } = require('./getOrderStatusTool');
 const { logOrderLookup } = require('../utils/securityLogger');
+const { keysFor, isLocked, recordFailure, recordSuccess } = require('../utils/orderLookupGuard');
 
 /**
  * Tool: get_order_details
  * Fetches cached order data from orders.json
  * Falls back to get_order_status if order not found in cache
  */
-async function getOrderDetailsTool({ order_id, email }) {
+async function getOrderDetailsToolInner({ order_id, email }) {
   try {
     // Validate inputs
     if (!order_id || !email) {
@@ -46,6 +47,27 @@ async function getOrderDetailsTool({ order_id, email }) {
       throw error;
     }
     throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
+  }
+}
+
+/**
+ * Public entry point: locks out repeated failed order_id/email guesses
+ * against the local cache lookup too, not just the live-API fallback.
+ */
+async function getOrderDetailsTool({ order_id, email }) {
+  const keys = keysFor(order_id, email);
+
+  if (keys.length > 0 && isLocked(keys)) {
+    throw new Error('Beklager, det har vært for mange mislykkede forsøk på denne ordren. Vennligst kontakt kundeservice på kundeservice@visor.no.');
+  }
+
+  try {
+    const result = await getOrderDetailsToolInner({ order_id, email });
+    if (keys.length > 0) recordSuccess(keys);
+    return result;
+  } catch (error) {
+    if (keys.length > 0) recordFailure(keys);
+    throw error;
   }
 }
 

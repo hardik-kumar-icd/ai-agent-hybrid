@@ -2,12 +2,13 @@ const axios = require('axios');
 const platformConfig = require('../config/platform');
 const { sanitizeOrderData } = require('../utils/piiFilter');
 const { logOrderLookup } = require('../utils/securityLogger');
+const { keysFor, isLocked, recordFailure, recordSuccess } = require('../utils/orderLookupGuard');
 
 /**
  * Tool: get_order_status
  * Fetches real-time order info from CMS API (WordPress/WooCommerce or Magento 2)
  */
-async function getOrderStatusTool({ order_id, email }) {
+async function getOrderStatusToolInner({ order_id, email }) {
   try {
     // Validate inputs
     if (!order_id || !email) {
@@ -197,6 +198,28 @@ async function getOrderStatusTool({ order_id, email }) {
       throw error;
     }
     throw new Error('Beklager, vi kunne ikke finne en ordre med den informasjonen. Vennligst kontroller ID og e-postadresse.');
+  }
+}
+
+/**
+ * Public entry point: locks out repeated failed order_id/email guesses.
+ * Either axis (a fixed order_id tried against many emails, or a fixed email
+ * tried against many order_ids) trips its own key independently.
+ */
+async function getOrderStatusTool({ order_id, email }) {
+  const keys = keysFor(order_id, email);
+
+  if (keys.length > 0 && isLocked(keys)) {
+    throw new Error('Beklager, det har vært for mange mislykkede forsøk på denne ordren. Vennligst kontakt kundeservice på kundeservice@visor.no.');
+  }
+
+  try {
+    const result = await getOrderStatusToolInner({ order_id, email });
+    if (keys.length > 0) recordSuccess(keys);
+    return result;
+  } catch (error) {
+    if (keys.length > 0) recordFailure(keys);
+    throw error;
   }
 }
 

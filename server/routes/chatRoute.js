@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { chatAgent } = require('../agents/chatAgent');
+const { validateMessage } = require('../middlewares/validation');
 
 // GET handler for endpoint info
 router.get('/', (req, res) => {
@@ -19,16 +20,9 @@ router.get('/', (req, res) => {
 });
 
 // POST /chat endpoint
-router.post('/', async (req, res) => {
+router.post('/', validateMessage, async (req, res) => {
   try {
     const { message, conversationId } = req.body;
-
-    // Validate required fields
-    if (!message) {
-      return res.status(400).json({ 
-        error: 'Message is required' 
-      });
-    }
 
     // Call the chat agent
     const aiReply = await chatAgent(message, conversationId);
