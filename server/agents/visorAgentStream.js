@@ -52,6 +52,15 @@ const SOURCE_LABELS = {
   'tickets_fixed.jsonl': 'Support ticket history',
 };
 
+// A learned_qa answer reflects a customer's satisfaction at approval time,
+// not an ongoing guarantee the underlying policy/info hasn't changed since.
+// Past this age it's still used as a candidate the LLM weighs against fresh
+// KB results (see routeOpts.learnedQa), but it no longer bypasses the LLM
+// entirely via the high-confidence SHORT-CIRCUIT — an old answer silently
+// short-circuiting forever was the highest-risk staleness gap found in the
+// retrieval-quality review.
+const LEARNED_QA_STALE_DAYS = parseFloat(process.env.LEARNED_QA_STALE_DAYS || '180');
+
 // ---------------------------------------------------------------------------
 // Trace state — populated during a single request, returned afterwards.
 // Note: this is closure-shared (not request-scoped) because Node's PM2 fork
@@ -347,8 +356,15 @@ async function runLearnedQaSearch(query, telemetryIds = null) {
     });
   }
 
-  console.log(`[search:learned_qa] HIT best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)}`);
-  return { passed: true, score: bestScore, answer };
+  // Entries embedded before this metadata field existed have no approved_at —
+  // treat those as stale too (conservative default) rather than assuming
+  // they're fresh, since we have no actual evidence either way.
+  const approvedAtMs = typeof top.metadata?.approved_at === 'number' ? top.metadata.approved_at : null;
+  const ageDays = approvedAtMs !== null ? (Date.now() - approvedAtMs) / (24 * 60 * 60 * 1000) : Infinity;
+  const isStale = ageDays > LEARNED_QA_STALE_DAYS;
+
+  console.log(`[search:learned_qa] HIT best=${bestScore.toFixed(3)} floor=${floor.toFixed(2)} ageDays=${Number.isFinite(ageDays) ? ageDays.toFixed(0) : 'unknown'} stale=${isStale}`);
+  return { passed: true, score: bestScore, answer, isStale };
 }
 
 function docsToContext(docs) {
@@ -733,13 +749,16 @@ async function processVisorMessageStream(message, conversationHistory = [], onTo
       conversationId: opts.dbConversationId,
     });
     if (lq && lq.passed) {
-      if (lq.score >= SHORTCIRCUIT) {
+      if (lq.score >= SHORTCIRCUIT && !lq.isStale) {
         _lastPath = 'learned_qa';
         console.log(`[learned_qa] SHORT-CIRCUIT best=${lq.score.toFixed(3)} >= ${SHORTCIRCUIT.toFixed(2)}`);
         try { onToken(lq.answer); } catch (cbErr) {
           console.error('[Stream] onToken error:', cbErr.message);
         }
         return lq.answer;
+      }
+      if (lq.score >= SHORTCIRCUIT && lq.isStale) {
+        console.log(`[learned_qa] SHORT-CIRCUIT candidate but STALE (>${LEARNED_QA_STALE_DAYS}d) — routing through LLM as a candidate instead`);
       }
       routeOpts = { ...opts, learnedQa: { score: lq.score, answer: lq.answer } };
     }

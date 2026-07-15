@@ -392,6 +392,70 @@ function isSensitivePolicyQuery(message) {
   return patterns.some((p) => p.test(message));
 }
 
+// Every current caller of this function passes ticket docs (visor_tickets
+// carries a created_at in metadata; FAQ/product docs don't and simply get no
+// penalty below). A 2019 ticket and a 2026 ticket previously scored
+// identically at any given cosine similarity — this adds a small smooth
+// recency nudge so near-duplicate/near-tied matches favor the fresher ticket,
+// without a hard cutoff: a strongly-matching old ticket can still outrank a
+// weakly-matching new one, this only breaks ties.
+const TICKET_RECENCY_HALF_LIFE_DAYS = parseFloat(process.env.TICKET_RECENCY_HALF_LIFE_DAYS || '730');
+const TICKET_RECENCY_MAX_PENALTY = 0.03;
+
+function recencyPenaltyFor(doc) {
+  const createdAtRaw = doc?.metadata?.created_at;
+  if (!createdAtRaw) return 0;
+  const createdMs = new Date(createdAtRaw).getTime();
+  if (Number.isNaN(createdMs)) return 0;
+  const ageDays = Math.max(0, (Date.now() - createdMs) / (24 * 60 * 60 * 1000));
+  return -TICKET_RECENCY_MAX_PENALTY * (1 - Math.pow(0.5, ageDays / TICKET_RECENCY_HALF_LIFE_DAYS));
+}
+
+// Ticket chunks carry a per-ticket header (TICKET CODE/DEPARTMENT/DATE) that's
+// always unique even when two tickets ask the same recurring question — strip
+// those lines before comparing so near-duplicate tickets actually match.
+function extractSubstantiveTicketText(text) {
+  return String(text || '')
+    .split('\n')
+    .filter((line) => !/^(TICKET CODE|DEPARTMENT|DATE):/i.test(line.trim()))
+    .join(' ')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function jaccardSimilarity(wordsA, wordsB) {
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+  let intersection = 0;
+  for (const tok of wordsA) if (wordsB.has(tok)) intersection += 1;
+  const union = wordsA.size + wordsB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+// 13k tickets means the same recurring question (e.g. "where do you ship
+// from") can produce many near-identical chunks that would otherwise all
+// occupy top-K slots. Docs are assumed pre-sorted best-first; this keeps the
+// highest-scoring doc per near-duplicate cluster and drops the rest so
+// distinct results (and FAQ/product docs merged alongside them) aren't
+// crowded out by sheer duplicate volume.
+const TICKET_DEDUP_SIMILARITY_THRESHOLD = 0.8;
+
+function dedupeNearDuplicateTickets(sortedDocs) {
+  if (!Array.isArray(sortedDocs) || sortedDocs.length <= 1) return sortedDocs;
+  const kept = [];
+  const keptWordSets = [];
+  for (const doc of sortedDocs) {
+    const words = new Set(extractSubstantiveTicketText(doc?.text).split(' ').filter(Boolean));
+    const isDuplicate = keptWordSets.some((seen) => jaccardSimilarity(seen, words) >= TICKET_DEDUP_SIMILARITY_THRESHOLD);
+    if (!isDuplicate) {
+      kept.push(doc);
+      keptWordSets.push(words);
+    }
+  }
+  return kept;
+}
+
 function reRankByKeywordOverlap(docs, query) {
   if (!Array.isArray(docs) || !query) return docs;
   const queryTokens = String(query).toLowerCase()
@@ -400,7 +464,7 @@ function reRankByKeywordOverlap(docs, query) {
     .filter((t) => t.length >= 3);
   const querySet = new Set(queryTokens);
 
-  return docs
+  const ranked = docs
     .map((doc) => {
       const text = String(doc?.text || '').toLowerCase();
       let overlap = 0;
@@ -408,10 +472,12 @@ function reRankByKeywordOverlap(docs, query) {
         if (text.includes(tok)) overlap += 1;
       }
       const baseScore = typeof doc?.score === 'number' ? doc.score : 0;
-      const combined = baseScore + overlap * 0.005;
+      const combined = baseScore + overlap * 0.005 + recencyPenaltyFor(doc);
       return { ...doc, combinedScore: combined };
     })
     .sort((a, b) => (b.combinedScore || 0) - (a.combinedScore || 0));
+
+  return dedupeNearDuplicateTickets(ranked);
 }
 
 function sanitizeTicketText(text) {
