@@ -508,11 +508,25 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
 
   const toolDefinitions = getToolDefinitions();
 
-  const routerModel = new ChatOpenAI({
+  // One model handles both tool-call decisions AND the final answer (previously
+  // a cheaper gpt-4o-mini "router" decided tools, then a separate gpt-4o
+  // "synthesis" call re-generated the answer from scratch afterwards — an
+  // entire extra round-trip resending the full system prompt + tool results,
+  // whose only purpose was upgrading write quality). Using gpt-4o throughout
+  // means whichever round comes back with no more tool calls already has a
+  // gpt-4o-quality answer ready to use directly — no extra call needed.
+  // Tradeoff: tool-decision rounds now cost gpt-4o pricing instead of
+  // gpt-4o-mini pricing, and the final answer is chunked/fake-streamed (see
+  // fakeStreamText below) rather than truly streamed token-by-token, since
+  // it's no longer generated via a dedicated .stream() call.
+  const agentModel = new ChatOpenAI({
     openAIApiKey: process.env.OPENAI_API_KEY,
-    modelName: 'gpt-4o-mini',
-    temperature: 0.2,
+    modelName: 'gpt-4o',
+    temperature: 0.3,
+    maxTokens: COMPLEX_PATH_MAX_TOKENS,
   }).bindTools(toolDefinitions);
+
+  if (_lastTrace) _lastTrace.modelUsed = 'gpt-4o';
 
   const historyMessages = (conversationHistory || []).flatMap((turn) => {
     if (turn.role === 'user') return [new HumanMessage(turn.content)];
@@ -526,7 +540,7 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
     new HumanMessage(message),
   ];
 
-  let response = await routerModel.invoke(messages);
+  let response = await agentModel.invoke(messages);
 
   function extractToolCalls(r) {
     if (r.tool_calls && Array.isArray(r.tool_calls)) return r.tool_calls;
@@ -685,41 +699,41 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
 
     messages.push(response);
     messages.push(...toolResults);
-    response = await routerModel.invoke(messages);
+    response = await agentModel.invoke(messages);
     toolCalls = extractToolCalls(response);
   }
 
-  const synthesisModel = new ChatOpenAI({
-    openAIApiKey: process.env.OPENAI_API_KEY,
-    modelName: 'gpt-4o',
-    temperature: 0.3,
-    maxTokens: COMPLEX_PATH_MAX_TOKENS,
-    streaming: true,
-  });
+  // No more tool calls — this response IS the final answer (already gpt-4o
+  // quality, since agentModel is used throughout). Fake-stream it in small
+  // chunks via the same onToken callback real streaming uses, so the customer
+  // still sees it appear progressively instead of all at once.
+  const fullText = typeof response.content === 'string'
+    ? response.content
+    : (response.content?.[0]?.text || '');
 
-  if (_lastTrace) _lastTrace.modelUsed = 'gpt-4o';
-
-  const finalMessages = messages.slice();
-  finalMessages.push(new HumanMessage(
-    'Write the final answer NOW. Be BRIEF: for comparisons use 2-3 short bullet points per item (1 line each). For simple facts use 1-2 sentences. Never exceed ~350 words. Use tool results above. Same language as the user\'s last message. Do not write introductions or closing paragraphs.'
-  ));
-
-  let fullText = '';
-  const stream = await synthesisModel.stream(finalMessages);
-
-  for await (const chunk of stream) {
-    const token = typeof chunk.content === 'string'
-      ? chunk.content
-      : (chunk.content?.[0]?.text || '');
-    if (token) {
-      fullText += token;
-      try { onToken(token); } catch (cbErr) {
-        console.error('[Stream] onToken error:', cbErr.message);
-      }
-    }
-  }
+  await fakeStreamText(fullText, onToken);
 
   return fullText;
+}
+
+/**
+ * Chunk a complete string into small pieces delivered via onToken with a
+ * short delay between them, so a non-streamed answer still appears to type
+ * out progressively — matching the cadence real token streaming would give.
+ * Mirrors utils/orderResponseFormatter.js's streamTextAsTokens, but drives
+ * the generic onToken callback instead of writing SSE frames directly (this
+ * call site doesn't have access to the raw response object).
+ */
+async function fakeStreamText(text, onToken, { delayMs = 20, chunkSize = 3 } = {}) {
+  for (let i = 0; i < text.length; i += chunkSize) {
+    const chunk = text.slice(i, i + chunkSize);
+    try { onToken(chunk); } catch (cbErr) {
+      console.error('[Stream] onToken error:', cbErr.message);
+    }
+    if (delayMs > 0 && i + chunkSize < text.length) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
 }
 
 // ===========================================================================
