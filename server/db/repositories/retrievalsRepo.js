@@ -123,8 +123,56 @@ async function getRecentLowConfidence(opts = {}) {
   return result.rows;
 }
 
+/**
+ * Group low-confidence retrievals by (query, source) so the same recurring
+ * question — the same failure asked many times — surfaces as one row with an
+ * occurrence count, rather than being buried among individually-recent rows.
+ * This is the ground-truth "what are customers asking that we can't answer"
+ * signal: fully instrumented since Drop 4-light, but never surfaced anywhere
+ * until now. Exact-string grouping won't cluster paraphrases of the same
+ * intent, but repeated near-identical phrasing (the common case) groups fine.
+ *
+ * @param {object} opts
+ * @param {number} opts.limit  - max distinct (query, source) rows (default 20, max 100)
+ * @param {string} opts.since  - ISO date, optional — only rows from this point on
+ * @returns {Promise<Array<{query, source, occurrences, last_seen, avg_score,
+ *   floor, latest_conversation_id, latest_message_id}>>}
+ */
+async function getTopUnansweredQueries(opts = {}) {
+  const limit = Math.min(parseInt(opts.limit, 10) || 20, 100);
+  const params = [];
+  let sinceClause = '';
+  if (opts.since) {
+    params.push(opts.since);
+    sinceClause = `AND created_at >= $${params.length}`;
+  }
+  params.push(limit);
+  const limitParam = `$${params.length}`;
+
+  const result = await query(
+    `SELECT
+       query,
+       source,
+       COUNT(*)::int AS occurrences,
+       MAX(created_at) AS last_seen,
+       AVG(top_match_score) AS avg_score,
+       MAX(floor) AS floor,
+       (ARRAY_AGG(conversation_id ORDER BY created_at DESC))[1] AS latest_conversation_id,
+       (ARRAY_AGG(message_id ORDER BY created_at DESC))[1] AS latest_message_id
+     FROM retrievals
+     WHERE passed_floor = false ${sinceClause}
+     GROUP BY query, source
+     ORDER BY occurrences DESC, last_seen DESC
+     LIMIT ${limitParam}`,
+    params
+  );
+  if (!result) return [];
+  return result.rows;
+}
+
 module.exports = {
   insert,
   getByMessageId,
   getRecentLowConfidence,
+  getTopUnansweredQueries,
 };

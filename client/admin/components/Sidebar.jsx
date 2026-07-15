@@ -16,6 +16,7 @@ export default function Sidebar({
     { id: 'overview',      label: 'Overview',          icon: '📊' },
     { id: 'conversations', label: 'Conversations',     icon: '💬' },
     { id: 'feedback',      label: 'Feedback',          icon: '👍' },
+    { id: 'unanswered',    label: 'Unanswered',        icon: '❓' },
     { id: 'learned',       label: 'Learning',          icon: '🧠' },
     { id: 'knowledge',     label: 'Knowledge Base',    icon: '📁' },
     { id: 'diagnostics',   label: 'Diagnostics',       icon: '🔧' },
@@ -30,10 +31,15 @@ export default function Sidebar({
 
       <nav className="admin-sidebar-nav">
         {sections.map((s) => {
-          const badge =
-            s.id === 'feedback' && overviewStats?.thumbs_down > 0
-              ? overviewStats.thumbs_down
-              : null;
+          let badge = null;
+          let badgeTitle = '';
+          if (s.id === 'feedback' && overviewStats?.thumbs_down > 0) {
+            badge = overviewStats.thumbs_down;
+            badgeTitle = 'Thumbs-down feedback waiting for review';
+          } else if (s.id === 'unanswered' && overviewStats?.unanswered_patterns > 0) {
+            badge = overviewStats.unanswered_patterns;
+            badgeTitle = 'Distinct queries that failed every knowledge source';
+          }
           return (
             <button
               key={s.id}
@@ -44,7 +50,7 @@ export default function Sidebar({
               <span className="admin-sidebar-icon" aria-hidden="true">{s.icon}</span>
               <span className="admin-sidebar-label">{s.label}</span>
               {badge !== null && (
-                <span className="admin-sidebar-badge" title="Thumbs-down feedback waiting for review">
+                <span className="admin-sidebar-badge" title={badgeTitle}>
                   {badge}
                 </span>
               )}
