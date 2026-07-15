@@ -41,7 +41,7 @@ function buildChunkText(p) {
   lines.push(`SKU: ${p.sku}`);
   lines.push(`CATEGORY: ${p.category_name}`);
   if (p.url_key) {
-    const base = (process.env.MAGENTO_STORE_BASE_URL || 'https://test.visor.no').replace(/\/$/, '');
+    const base = (process.env.MAGENTO_STORE_BASE_URL || 'https://visor.no').replace(/\/$/, '');
     lines.push(`URL: ${base}/${p.url_key}`);
   }
   lines.push('');
@@ -120,7 +120,7 @@ function softCap(text, max) {
 // Build the Pinecone metadata for one product
 // ---------------------------------------------------------------------------
 function buildMetadata(p) {
-  const baseUrl = (process.env.MAGENTO_STORE_BASE_URL || 'https://test.visor.no').replace(/\/$/, '');
+  const baseUrl = (process.env.MAGENTO_STORE_BASE_URL || 'https://visor.no').replace(/\/$/, '');
   const meta = {
     sku: String(p.sku || ''),
     product_id: Number(p.id),

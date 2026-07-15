@@ -66,7 +66,39 @@ const ingestLimiter = rateLimit({
   }
 });
 
+/**
+ * Chat Rate Limiter
+ * Stricter limit (20/min/IP) for the LLM-backed chat/RAG endpoints, on top of
+ * the shared global limiter — these are the most expensive and most abusable
+ * routes (cost per request, PII exposure via order lookups), so a
+ * hijacked/scripted session hammering them should be throttled faster than
+ * ordinary low-frequency site traffic.
+ */
+const chatLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // Limit each IP to 20 requests per windowMs
+  message: {
+    error: 'Too many requests, please try again later.',
+    retry_after: 0
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: {
+    trustProxy: false
+  },
+  handler: (req, res) => {
+    const resetTime = req.rateLimit?.resetTime || Date.now() + (60 * 1000);
+    const retryAfter = Math.max(0, Math.ceil((resetTime - Date.now()) / 1000));
+
+    res.status(429).json({
+      error: 'Too many requests, please try again later.',
+      retry_after: retryAfter
+    });
+  }
+});
+
 module.exports = {
   globalLimiter,
-  ingestLimiter
+  ingestLimiter,
+  chatLimiter
 };

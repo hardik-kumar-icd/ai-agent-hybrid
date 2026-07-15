@@ -101,7 +101,7 @@ CRITICAL:
 - Generalize from the examples and focus on the user's question.
 - Match the language of the user's current message (Norwegian vs English).
 
-If the examples are not sufficient, give a best-effort helpful answer and, if needed, suggest contacting kundeservice@test.visor.no or phone support.`;
+If the examples are not sufficient, give a best-effort helpful answer and, if needed, suggest contacting kundeservice@visor.no or phone support.`;
 
   const messages = [
     new SystemMessage(systemPrompt),

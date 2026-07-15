@@ -4,6 +4,23 @@ const multer = require('multer');
 const path = require('path');
 require('dotenv').config();
 
+// Safety net for the recurring "production traffic accidentally hit the
+// staging store" incident: if we're running in production, refuse to boot
+// if any store URL still points at a test/staging domain. A misconfigured
+// .env should fail loudly at startup, not silently misroute live customer
+// order lookups.
+if (process.env.NODE_ENV === 'production') {
+  const storeUrlVars = ['MAGENTO_API_URL', 'MAGENTO_STORE_BASE_URL', 'WORDPRESS_API_URL'];
+  const offending = storeUrlVars.filter((name) => (process.env[name] || '').includes('test.'));
+  if (offending.length > 0) {
+    console.error(
+      `FATAL: NODE_ENV=production but the following env vars point at a test/staging domain: ${offending.join(', ')}. ` +
+      'Refusing to start to avoid misrouting live traffic. Fix server/.env before restarting.'
+    );
+    process.exit(1);
+  }
+}
+
 // Import routes
 const chatRoute = require('./routes/chatRoute');
 const fileRoute = require('./routes/fileRoute');
@@ -17,7 +34,7 @@ const { ragAgent } = require('./agents/ragAgent');
 const { deleteAllVectors } = require('./utils/embeddingService');
 
 // Import rate limiters
-const { globalLimiter, ingestLimiter } = require('./middlewares/rateLimiter');
+const { globalLimiter, ingestLimiter, chatLimiter } = require('./middlewares/rateLimiter');
 
 // Import session cache and auth for debug endpoints
 const { sessionCache } = require('./middlewares/session');
@@ -53,29 +70,30 @@ const upload = multer({
 });
 
 // CORS configuration
+// The agent is only meant to be embedded on the real Visor storefronts.
+// Origins are locked to that allow-list in production; localhost/ngrok are
+// only permitted outside of production for local development.
+const PRODUCTION_ALLOWED_ORIGINS = [
+  'https://visor.no',
+  'https://test.visor.no'
+];
+
+function isDevOrigin(origin) {
+  return origin.includes('ngrok') || origin.includes('localhost') || origin.includes('127.0.0.1');
+}
+
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, Postman, or same-origin requests)
+    // Allow requests with no origin (mobile apps, Postman, curl, same-origin, server-to-server)
     if (!origin) return callback(null, true);
-    
-    // List of allowed origins
-    const allowedOrigins = [
-      'https://test.visor.no',
-      'https://visor.no',
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:3001'
-    ];
-    
-    // Check if origin is allowed
-    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('ngrok') || origin.includes('localhost')) {
+
+    const isAllowed = PRODUCTION_ALLOWED_ORIGINS.includes(origin) ||
+      (process.env.NODE_ENV !== 'production' && isDevOrigin(origin));
+
+    if (isAllowed) {
       callback(null, true);
     } else {
-      // For development/testing, you might want to allow all origins
-      // In production, uncomment the line below to restrict to allowed origins only
-      // callback(new Error('Not allowed by CORS'));
-      callback(null, true); // Allow all for now - change in production
+      callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
@@ -84,6 +102,31 @@ const corsOptions = {
   exposedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 200 // Some legacy browsers (IE11, various SmartTVs) choke on 204
 };
+
+// Origin/Referer guard for the expensive chat/RAG endpoints.
+// Defense-in-depth on top of CORS: CORS only constrains browsers, so a
+// scripted client (curl, a bot, a widget embedded on some other site) can
+// ignore it entirely. This rejects any request whose Origin/Referer header
+// (when present) doesn't point at a real Visor storefront. It does not stop
+// an attacker who forges these headers directly, but it stops casual
+// scraping/hijacking/third-party embedding, which is the realistic threat.
+function originGuard(req, res, next) {
+  const origin = req.headers.origin;
+  const referer = req.headers.referer;
+  const isDev = process.env.NODE_ENV !== 'production';
+
+  const matches = (value) => {
+    if (!value) return true; // header absent — nothing to check here
+    if (PRODUCTION_ALLOWED_ORIGINS.some((allowed) => value.startsWith(allowed))) return true;
+    return isDev && isDevOrigin(value);
+  };
+
+  if (matches(origin) && matches(referer)) {
+    return next();
+  }
+
+  return res.status(403).json({ error: 'Forbidden: request not allowed from this origin' });
+}
 
 // Middleware
 app.use(cors(corsOptions));
@@ -99,7 +142,7 @@ app.get('/', (req, res) => {
 });
 
 // Chat route
-app.use('/chat', chatRoute);
+app.use('/chat', originGuard, chatLimiter, chatRoute);
 
 // File ingestion route (RAG) - Legacy endpoint
 app.use('/ingest', fileRoute);
@@ -108,8 +151,8 @@ app.use('/ingest', fileRoute);
 app.use('/api/ingest', ingestLimiter, fileRoute);
 
 // Visor.no AI Agent route
-app.use('/visor-chat', visorRoute);
-app.use('/visor-chat/stream', visorChatStreamRoute);
+app.use('/visor-chat', originGuard, chatLimiter, visorRoute);
+app.use('/visor-chat/stream', originGuard, chatLimiter, visorChatStreamRoute);
 
 // Customer: order-based installation videos for purchased categories
 app.use('/api/order', orderInstallGuidesRoute);
@@ -250,91 +293,8 @@ app.get('/api/sessions', requireAdminAuth, (req, res) => {
   }
 });
 
-// Test endpoint for WooCommerce API connectivity
-app.get('/test-woocommerce', async (req, res) => {
-  try {
-    const platformConfig = require('./config/platform');
-    const axios = require('axios');
-    
-    const { platform, endpoints, auth } = platformConfig;
-    
-    if (platform !== 'wordpress') {
-      return res.json({
-        status: 'info',
-        message: `Platform is set to '${platform}', not 'wordpress'`,
-        config: {
-          platform: platform,
-          endpoint: endpoints.wordpress,
-          hasCredentials: !!(auth.wordpress.consumerKey && auth.wordpress.consumerSecret)
-        }
-      });
-    }
-    
-    if (!auth.wordpress.consumerKey || !auth.wordpress.consumerSecret) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'WooCommerce credentials not configured',
-        help: 'Set WOOCOMMERCE_CONSUMER_KEY and WOOCOMMERCE_CONSUMER_SECRET in .env file'
-      });
-    }
-    
-    // Test API connection
-    const testOrderId = req.query.order_id || '1';
-    const apiUrl = `${endpoints.wordpress}/orders/${testOrderId}`;
-    const credentials = Buffer.from(
-      `${auth.wordpress.consumerKey}:${auth.wordpress.consumerSecret}`
-    ).toString('base64');
-    
-    try {
-      const response = await axios.get(apiUrl, {
-        headers: {
-          'Authorization': `Basic ${credentials}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 10000
-      });
-      
-      res.json({
-        status: 'success',
-        message: 'WooCommerce API connection successful',
-        order: {
-          id: response.data.id,
-          status: response.data.status,
-          email: response.data.billing?.email,
-          total: response.data.total
-        },
-        config: {
-          endpoint: endpoints.wordpress,
-          platform: platform
-        }
-      });
-    } catch (error) {
-      res.status(error.response?.status || 500).json({
-        status: 'error',
-        message: 'WooCommerce API connection failed',
-        error: {
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          message: error.message,
-          details: error.response?.data || error.message
-        },
-        config: {
-          endpoint: apiUrl,
-          hasCredentials: true
-        }
-      });
-    }
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      message: 'Test endpoint error',
-      error: error.message
-    });
-  }
-});
-
 // RAG route for testing - GET handler (with query parameter)
-app.get('/rag', async (req, res) => {
+app.get('/rag', originGuard, chatLimiter, async (req, res) => {
   try {
     const { query } = req.query;
     
@@ -363,7 +323,7 @@ app.get('/rag', async (req, res) => {
 });
 
 // RAG route - POST handler (with JSON body)
-app.post('/rag', async (req, res) => {
+app.post('/rag', originGuard, chatLimiter, async (req, res) => {
   try {
     // Accept both 'query' and 'message' fields for flexibility
     const query = req.body.query || req.body.message;
