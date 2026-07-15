@@ -115,6 +115,19 @@ function pickFastPathModel(docs) {
  */
 const KEYWORD_RESCUE_SOURCES = new Set(['visor_products']);
 
+// visor_products mixes 47 curated product-matrix chunks with ~56 generic
+// per-SKU catalog chunks in the same Pinecone source. The default topK=10 is
+// tight enough that a "compare all X models" query (Rullegardiner alone has
+// 10 matrix chunks) can plausibly miss some of a single category's own
+// entries once mixed against everything else in the source. A comfortably
+// larger topK for this one source costs a bit more Pinecone bandwidth per
+// query but meaningfully lowers that miss risk.
+const SOURCE_TOPK_OVERRIDES = { visor_products: 16 };
+
+function topKForSource(sourceName, fallback = 10) {
+  return SOURCE_TOPK_OVERRIDES[sourceName] ?? fallback;
+}
+
 /**
  * Keyword rescue for short term / SKU queries.
  *
@@ -180,7 +193,7 @@ async function ragRetrieve(query, opts = {}) {
   let mergedDocs = [];
 
   if (preferredSource) {
-    const { docs, belowFloor } = await searchSourceWithFloor(query, preferredSource, topK);
+    const { docs, belowFloor } = await searchSourceWithFloor(query, preferredSource, topKForSource(preferredSource, topK));
     if (!belowFloor && docs.length > 0) {
       mergedDocs = docs;
     }
@@ -254,7 +267,7 @@ async function ragRetrieve(query, opts = {}) {
  * Search one source for the typed-tool handlers (complex path).
  */
      async function runTypedSearch(query, sourceName, userMessage, telemetryIds = null) {
-      const { docs, belowFloor } = await searchSourceWithFloor(query, sourceName, 10);
+      const { docs, belowFloor } = await searchSourceWithFloor(query, sourceName, topKForSource(sourceName));
        const bestScore = docs.length > 0 ? (docs[0].score || 0) : 0;
        const floor = CONFIDENCE_FLOORS[sourceName] ?? null;
 
