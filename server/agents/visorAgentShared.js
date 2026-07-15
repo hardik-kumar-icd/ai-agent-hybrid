@@ -86,7 +86,7 @@ TOOL USAGE RULES:
 - For ANY question about Visor.no — products, services, FAQs, delivery, payments, installation, prices, policies — call AT LEAST ONE search_* tool FIRST. Do not answer from training data.
 - Choose the right tool for the question type:
   - search_faq:      policies, processes, how-to, opening hours, payment methods, returns
-  - search_products: authoritative product specs (dimensions, textiles, prices, comparisons). The knowledge base contains enriched product matrix data with ANBEFALES FOR, ANBEFALES IKKE FOR, and VANLIGE MISFORSTÅELSER fields — always use these when recommending products. When a customer gives a size or use case, check which products are recommended/not recommended for that scenario and explain WHY, not just list specs.
+  - search_products: authoritative product specs (dimensions, textiles, prices, comparisons). The knowledge base contains TWO kinds of visor_products chunks: curated product-matrix entries (fit/use-case fields — ANBEFALES FOR, ANBEFALES IKKE FOR, VANLIGE MISFORSTÅELSER) and per-SKU catalog entries (price, delivery time). They describe the same products but aren't always the same chunk. When a customer gives a size or use case, use the matrix fields to reason about which product fits and explain WHY; if a price/delivery question is part of the same question, also pull that detail from whichever retrieved chunk has it — don't answer with only fit reasoning and no price, or only a price with no fit reasoning, if the customer asked for both.
   - search_tickets:  precedent for unusual, non-sensitive edge cases (last resort). NEVER for the SENSITIVE TOPICS listed further below (returns, warranty/defects, GDPR, payment) — those always route to search_faq / stated policy instead, never to ticket history.
 - You may call multiple search tools in one turn when the question spans categories.
 - Use get_order_details or get_order_status ONLY when the user explicitly asks about an order AND provides both order ID and email. If the user provides an order number but NOT an email, do NOT call the tool — instead ask: "Kan du oppgi e-postadressen som er knyttet til bestillingen?" (or in English: "Could you provide the email address associated with the order?"). When the customer then provides their email in a follow-up message, look back through the conversation history to find the order number they mentioned earlier, then immediately call get_order_status with both the order number and the email. Never guess or skip the email requirement.
@@ -196,6 +196,15 @@ GARDINER (curtains):
 - Living/dining rooms, decorative: Velour, Retro Velour or Velluto Velour.
 - Bedrooms or dimout/blackout: Skjermende, Dimout og Blackout gardiner.
 - Always ask if customer needs a rail/track (aluminiumsprofil) — curtains require a separate rail.
+
+ALUMINIUMSPROFILER (curtain rails/tracks) — pick by function, not room; every variant suits any room:
+- Heavy or thick curtains (e.g. thick blackout drapes): the 35mm white profile — explicitly rated as the strongest option for heavy curtains.
+- Two curtain layers on one window (e.g. sheer + blackout together): a double-groove rail ("dobbel spor" / "dobbelt løp"), or add double-track brackets to a single-groove rail.
+- Ceiling mount with no wall brackets wanted: the single- or double-groove "Tak skinne" rails mount directly to the ceiling, no brackets needed.
+- Corner window: the 90° corner piece ("Bue") connects to a single-groove ceiling rail.
+- Finish (white / matte black / brass) is purely aesthetic — ask the customer's preference, it does not affect function.
+- Round profiles come in 14/20/28/35mm diameters — thicker diameters generally suit heavier curtains.
+- Max length 400cm per piece; longer runs are spliced with a connector piece.
 
 PAYMENT METHODS (AUTHORITATIVE — do not invent or hallucinate):
 Visor accepts ONLY these payment methods:
@@ -396,13 +405,17 @@ function isSensitivePolicyQuery(message) {
   return patterns.some((p) => p.test(message));
 }
 
-// Every current caller of this function passes ticket docs (visor_tickets
-// carries a created_at in metadata; FAQ/product docs don't and simply get no
-// penalty below). A 2019 ticket and a 2026 ticket previously scored
-// identically at any given cosine similarity — this adds a small smooth
-// recency nudge so near-duplicate/near-tied matches favor the fresher ticket,
-// without a hard cutoff: a strongly-matching old ticket can still outrank a
-// weakly-matching new one, this only breaks ties.
+// reRankByKeywordOverlap is the SHARED ranking adjuster — searchSourceWithFloor
+// calls it for FAQ/product/ticket results alike, not just tickets. The
+// adjustments below are additive but self-gating: each only ever fires for
+// the doc type that actually carries its relevant metadata field, so they're
+// no-ops everywhere else.
+
+// Only visor_tickets docs carry created_at. A 2019 ticket and a 2026 ticket
+// previously scored identically at any given cosine similarity — this adds a
+// small smooth recency nudge so near-duplicate/near-tied matches favor the
+// fresher ticket, without a hard cutoff: a strongly-matching old ticket can
+// still outrank a weakly-matching new one, this only breaks ties.
 const TICKET_RECENCY_HALF_LIFE_DAYS = parseFloat(process.env.TICKET_RECENCY_HALF_LIFE_DAYS || '730');
 const TICKET_RECENCY_MAX_PENALTY = 0.03;
 
@@ -413,6 +426,18 @@ function recencyPenaltyFor(doc) {
   if (Number.isNaN(createdMs)) return 0;
   const ageDays = Math.max(0, (Date.now() - createdMs) / (24 * 60 * 60 * 1000));
   return -TICKET_RECENCY_MAX_PENALTY * (1 - Math.pow(0.5, ageDays / TICKET_RECENCY_HALF_LIFE_DAYS));
+}
+
+// visor_products mixes 47 curated product-matrix chunks (rich fit/use-case
+// guidance) with ~56 generic per-SKU catalog chunks in the SAME Pinecone
+// source. A small boost keeps the curated entries from being crowded out by
+// sheer volume of generic chunks at similar cosine scores. Every matrix chunk
+// already carries a 'priority: high' metadata field from ingestion — it was
+// just never actually read anywhere until now.
+const PRODUCT_MATRIX_PRIORITY_BOOST = 0.02;
+
+function priorityBoostFor(doc) {
+  return doc?.metadata?.priority === 'high' ? PRODUCT_MATRIX_PRIORITY_BOOST : 0;
 }
 
 // Ticket chunks carry a per-ticket header (TICKET CODE/DEPARTMENT/DATE) that's
@@ -441,9 +466,13 @@ function jaccardSimilarity(wordsA, wordsB) {
 // from") can produce many near-identical chunks that would otherwise all
 // occupy top-K slots. Docs are assumed pre-sorted best-first; this keeps the
 // highest-scoring doc per near-duplicate cluster and drops the rest so
-// distinct results (and FAQ/product docs merged alongside them) aren't
-// crowded out by sheer duplicate volume.
+// distinct results aren't crowded out by sheer duplicate volume. Gated to
+// ticket-only doc sets (see reRankByKeywordOverlap below) — product/FAQ
+// chunks can legitimately have very similar templated text (e.g. the same
+// curtain rail in different diameters/colors) that this would otherwise
+// wrongly treat as near-duplicates and drop.
 const TICKET_DEDUP_SIMILARITY_THRESHOLD = 0.8;
+const TICKET_SOURCES = new Set(['visor_tickets', 'tickets_fixed.jsonl']);
 
 function dedupeNearDuplicateTickets(sortedDocs) {
   if (!Array.isArray(sortedDocs) || sortedDocs.length <= 1) return sortedDocs;
@@ -476,12 +505,17 @@ function reRankByKeywordOverlap(docs, query) {
         if (text.includes(tok)) overlap += 1;
       }
       const baseScore = typeof doc?.score === 'number' ? doc.score : 0;
-      const combined = baseScore + overlap * 0.005 + recencyPenaltyFor(doc);
+      const combined = baseScore + overlap * 0.005 + recencyPenaltyFor(doc) + priorityBoostFor(doc);
       return { ...doc, combinedScore: combined };
     })
     .sort((a, b) => (b.combinedScore || 0) - (a.combinedScore || 0));
 
-  return dedupeNearDuplicateTickets(ranked);
+  // Dedup only applies when every doc in this batch is from ticket history —
+  // searchSourceWithFloor calls this per-source, so a batch is never a mix of
+  // sources in practice, but this check is the safety net against ever
+  // deduping product/FAQ content by mistake.
+  const isTicketBatch = ranked.length > 0 && ranked.every((d) => TICKET_SOURCES.has(d?.source));
+  return isTicketBatch ? dedupeNearDuplicateTickets(ranked) : ranked;
 }
 
 function sanitizeTicketText(text) {
