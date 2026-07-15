@@ -20,6 +20,7 @@ const { requireAdminAuth } = require('../middlewares/auth');
 const adminRepo = require('../db/repositories/adminRepo');
 const episodicMemoryService = require('../services/episodicMemoryService');
 const learnedQaRepo = require('../db/repositories/learnedQaRepo');
+const retrievalsRepo = require('../db/repositories/retrievalsRepo');
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -207,6 +208,51 @@ router.patch('/learned-qa/:id', async (req, res) => {
     return res.status(200).json({ ok: true, learned_qa: row });
   } catch (err) {
     console.error('[admin/learned-qa/:id] error:', err?.message);
+    return res.status(500).json({ ok: false, error: 'internal error' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/admin/retrievals/unanswered
+// The ground-truth "what are customers asking that we have no good answer
+// for" view: every RAG lookup that failed every source's confidence floor,
+// grouped by the recurring question so the same failure asked many times
+// surfaces as one row with an occurrence count. Fully instrumented since
+// Drop 4-light but never surfaced anywhere until now.
+// Query params:
+//   limit  (default 20, max 100)
+//   since  (ISO date, optional)
+// ----------------------------------------------------------------------------
+router.get('/retrievals/unanswered', async (req, res) => {
+  try {
+    const rows = await retrievalsRepo.getTopUnansweredQueries({
+      limit: req.query.limit,
+      since: req.query.since,
+    });
+    return res.status(200).json({ ok: true, unanswered: rows });
+  } catch (err) {
+    console.error('[admin/retrievals/unanswered] error:', err?.message);
+    return res.status(500).json({ ok: false, error: 'internal error' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/admin/retrievals/low-confidence
+// Raw (non-grouped) recent low-confidence retrievals, for drilling into a
+// specific occurrence rather than the aggregated pattern view above.
+// Query params:
+//   limit   (default 50, max 200)
+//   source  ('visor_faqs' | 'visor_products' | 'visor_tickets', optional)
+// ----------------------------------------------------------------------------
+router.get('/retrievals/low-confidence', async (req, res) => {
+  try {
+    const rows = await retrievalsRepo.getRecentLowConfidence({
+      limit: req.query.limit,
+      source: req.query.source,
+    });
+    return res.status(200).json({ ok: true, retrievals: rows });
+  } catch (err) {
+    console.error('[admin/retrievals/low-confidence] error:', err?.message);
     return res.status(500).json({ ok: false, error: 'internal error' });
   }
 });

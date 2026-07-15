@@ -326,7 +326,9 @@ async function getOverviewStats() {
       (SELECT COUNT(*)::int FROM messages)                                AS messages,
       (SELECT COUNT(*)::int FROM message_feedback)                        AS feedback,
       (SELECT COUNT(*)::int FROM message_feedback WHERE rating = 'up')    AS thumbs_up,
-      (SELECT COUNT(*)::int FROM message_feedback WHERE rating = 'down')  AS thumbs_down
+      (SELECT COUNT(*)::int FROM message_feedback WHERE rating = 'down')  AS thumbs_down,
+      (SELECT COUNT(DISTINCT (query, source))::int FROM retrievals
+        WHERE passed_floor = false)                                      AS unanswered_patterns
   `);
   if (!result || result.rows.length === 0) return null;
   return result.rows[0];
