@@ -4,6 +4,11 @@ const { sanitizeOrderData } = require('../utils/piiFilter');
 const { logOrderLookup } = require('../utils/securityLogger');
 const { keysFor, isLocked, recordFailure, recordSuccess } = require('../utils/orderLookupGuard');
 
+// Bounds worst-case hang if Magento/WooCommerce is slow or unresponsive —
+// without this, a single stalled CMS request could hold up an entire chat
+// turn indefinitely.
+const CMS_REQUEST_TIMEOUT_MS = 10000;
+
 /**
  * Tool: get_order_status
  * Fetches real-time order info from CMS API (WordPress/WooCommerce or Magento 2)
@@ -74,7 +79,8 @@ async function getOrderStatusToolInner({ order_id, email }) {
           headers: {
             'Authorization': `Basic ${credentials}`,
             'Content-Type': 'application/json'
-          }
+          },
+          timeout: CMS_REQUEST_TIMEOUT_MS
         });
 
         const order = response.data;
@@ -127,7 +133,7 @@ async function getOrderStatusToolInner({ order_id, email }) {
 
         // 1) Try search by increment_id (customer-facing order number)
         const searchUrl = `${endpoints.magento}/orders?searchCriteria[filter_groups][0][filters][0][field]=increment_id&searchCriteria[filter_groups][0][filters][0][value]=${encodeURIComponent(String(order_id).trim())}&searchCriteria[filter_groups][0][filters][0][condition_type]=eq`;
-        const searchResponse = await axios.get(searchUrl, { headers });
+        const searchResponse = await axios.get(searchUrl, { headers, timeout: CMS_REQUEST_TIMEOUT_MS });
         const items = searchResponse.data?.items || [];
         if (items.length > 0) {
           order = items[0];
@@ -137,7 +143,7 @@ async function getOrderStatusToolInner({ order_id, email }) {
         if (!order && /^\d+$/.test(String(order_id).trim())) {
           const directUrl = `${endpoints.magento}/orders/${order_id}`;
           try {
-            const directResponse = await axios.get(directUrl, { headers });
+            const directResponse = await axios.get(directUrl, { headers, timeout: CMS_REQUEST_TIMEOUT_MS });
             if (directResponse.data) order = directResponse.data;
           } catch (_) {
             // Ignore 404 from direct GET; we'll throw below

@@ -85,14 +85,19 @@ function getLastRetrievalTrace() {
 function pickFastPathModel(docs) {
   if (!Array.isArray(docs) || docs.length === 0) return 'gpt-4o-mini';
   if (docs.length >= 3) return 'gpt-4o';
-  const hasProduct = docs.some((d) => {
+  const productDocCount = docs.filter((d) => {
     const src = (d.source || '').toLowerCase();
     const txt = (d.text || '').toLowerCase();
     if (src.includes('product')) return true;
     if (/\b(price|pris|sku|max.?(width|bredde)|systemb)/i.test(txt)) return true;
     return false;
-  });
-  if (hasProduct) return 'gpt-4o';
+  }).length;
+  // Escalate to the full model only when multiple product docs are in play
+  // (a comparison-style question benefits from more careful synthesis). A
+  // single product doc is a simple fact lookup ("what's the price of X?")
+  // that gpt-4o-mini handles fine — and product questions are common enough
+  // that escalating on every single one defeats the point of the fast path.
+  if (productDocCount >= 2) return 'gpt-4o';
   return 'gpt-4o-mini';
 }
 
@@ -518,43 +523,44 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
 
   let toolCalls = extractToolCalls(response);
 
-  while (toolCalls && toolCalls.length > 0) {
-    const toolResults = [];
+  // A single LLM turn can request multiple independent tool calls (e.g. the
+  // system prompt explicitly asks for search_faq + search_products together
+  // for ordering/measuring questions) — run them concurrently instead of
+  // one-at-a-time so the turn only pays for the slowest call, not the sum.
+  async function executeToolCall(toolCall) {
+    let functionName, functionArgs, toolCallId;
 
-    for (const toolCall of toolCalls) {
-      let functionName, functionArgs, toolCallId;
+    if (toolCall.name && toolCall.args) {
+      functionName = toolCall.name;
+      functionArgs = toolCall.args;
+    } else if (toolCall.function) {
+      functionName = toolCall.function.name;
+      functionArgs = toolCall.function.arguments || '{}';
+    } else if (toolCall.name) {
+      functionName = toolCall.name;
+      functionArgs = toolCall.arguments || '{}';
+    } else {
+      return null;
+    }
+    toolCallId = toolCall.id || toolCall.tool_call_id;
 
-      if (toolCall.name && toolCall.args) {
-        functionName = toolCall.name;
-        functionArgs = toolCall.args;
-      } else if (toolCall.function) {
-        functionName = toolCall.function.name;
-        functionArgs = toolCall.function.arguments || '{}';
-      } else if (toolCall.name) {
-        functionName = toolCall.name;
-        functionArgs = toolCall.arguments || '{}';
-      } else {
-        continue;
-      }
-      toolCallId = toolCall.id || toolCall.tool_call_id;
+    // Track tool calls for telemetry
+    if (_lastTrace && functionName) {
+      _lastTrace.toolCalls.push(functionName);
+    }
 
-      // Track tool calls for telemetry
-      if (_lastTrace && functionName) {
-        _lastTrace.toolCalls.push(functionName);
-      }
+    let args = {};
+    try {
+      args = typeof functionArgs === 'string'
+        ? JSON.parse(functionArgs || '{}')
+        : (functionArgs || {});
+    } catch (_) {
+      args = {};
+    }
 
-      let args = {};
-      try {
-        args = typeof functionArgs === 'string'
-          ? JSON.parse(functionArgs || '{}')
-          : (functionArgs || {});
-      } catch (_) {
-        args = {};
-      }
-
-      let result = '';
-      try {
-        switch (functionName) {
+    let result = '';
+    try {
+      switch (functionName) {
           case 'search_faq': {
           result = await runTypedSearch(args.query, 'visor_faqs', message, {
            messageId: opts.assistantMessageId,
@@ -643,20 +649,23 @@ async function processComplexPath(message, conversationHistory, onToken, opts = 
             result = JSON.stringify(r);
             break;
           }
-          default:
-            result = `Unknown tool: ${functionName}`;
-        }
-      } catch (err) {
-        result = `Error: ${err.message}`;
+        default:
+          result = `Unknown tool: ${functionName}`;
       }
-
-      toolResults.push({
-        tool_call_id: toolCallId,
-        role: 'tool',
-        name: functionName,
-        content: result,
-      });
+    } catch (err) {
+      result = `Error: ${err.message}`;
     }
+
+    return {
+      tool_call_id: toolCallId,
+      role: 'tool',
+      name: functionName,
+      content: result,
+    };
+  }
+
+  while (toolCalls && toolCalls.length > 0) {
+    const toolResults = (await Promise.all(toolCalls.map(executeToolCall))).filter(Boolean);
 
     messages.push(response);
     messages.push(...toolResults);
