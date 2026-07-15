@@ -3,6 +3,24 @@
  * Token-based authentication for admin routes
  */
 
+const crypto = require('crypto');
+
+/**
+ * Constant-time string comparison to avoid leaking key length/content via
+ * response-time differences.
+ */
+function timingSafeEqualStrings(a, b) {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    // Compare against a same-length dummy so the timing doesn't reveal
+    // whether the length mismatch is the reason for failure.
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 /**
  * Middleware to verify admin API key from Authorization header
  * Expects: Authorization: Bearer <ADMIN_API_KEY>
@@ -37,8 +55,8 @@ function requireAdminAuth(req, res, next) {
     });
   }
 
-  // Verify token matches admin API key
-  if (token !== adminApiKey) {
+  // Verify token matches admin API key (constant-time to avoid timing side-channel)
+  if (!timingSafeEqualStrings(token, adminApiKey)) {
     return res.status(401).json({
       error: 'Unauthorized: Invalid or missing token'
     });

@@ -396,7 +396,7 @@ CRITICAL:
 - Match the language of the user's current message (Norwegian vs English).
 - Do NOT start with filler like "Selvfølgelig" or "Of course".
 
-If the examples are not sufficient, give a best-effort helpful answer and, if needed, suggest contacting kundeservice@test.visor.no or phone support.`;
+If the examples are not sufficient, give a best-effort helpful answer and, if needed, suggest contacting kundeservice@visor.no or phone support.`;
 
   const response = await model.invoke([
     new SystemMessage(systemPrompt),
