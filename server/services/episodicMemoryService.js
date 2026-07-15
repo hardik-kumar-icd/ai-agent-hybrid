@@ -113,7 +113,13 @@ async function promoteFromFeedback({ messageId, conversationId } = {}) {
 async function embedRow(row) {
   const embeddingId = `learned_qa_${row.id}`;
   // Pinecone metadata can't hold null — only attach language if present.
-  const metadata = { answer: row.answer, learned_qa_id: row.id };
+  // approved_at (epoch ms) lets retrieval-time code judge staleness without a
+  // DB round trip — see LEARNED_QA_STALE_DAYS in visorAgentStream.js.
+  const metadata = {
+    answer: row.answer,
+    learned_qa_id: row.id,
+    approved_at: new Date(row.updated_at).getTime(),
+  };
   if (row.language) metadata.language = row.language;
 
   await embeddingService.embedAndStore(
