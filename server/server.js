@@ -75,7 +75,13 @@ const upload = multer({
 // only permitted outside of production for local development.
 const PRODUCTION_ALLOWED_ORIGINS = [
   'https://visor.no',
-  'https://test.visor.no'
+  'https://test.visor.no',
+  // The admin dashboard is served from this same host at /admin. Vite's
+  // production build emits <script type="module" crossorigin> and
+  // <link crossorigin> tags by default, which makes the browser send an
+  // Origin header even for same-origin static assets — without this entry
+  // the admin panel's own JS/CSS get rejected by this same CORS policy.
+  'https://agent.visor.no'
 ];
 
 function isDevOrigin(origin) {
